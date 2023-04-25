@@ -1,201 +1,303 @@
-#include<iostream>
-
-#include"glad/glad.h"
-#include"GLFW/glfw3.h"
 
 
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
 
-const unsigned int SCREEN_WIDTH = 1024;
-const unsigned int SCREEN_HEIGHT = 1024;
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
-const unsigned short OPENGL_MAJOR_VERSION = 4;
-const unsigned short OPENGL_MINOR_VERSION = 6;
+#include <shader_m.h>
+#include <shader_c.h>
+#include <camera.h>
 
-bool vSync = true;
+#include <iostream>
 
+void framebuffer_size_callback(GLFWwindow* window, int width, int height);
+void renderQuad();
 
-GLfloat vertices[] =
+// settings
+const unsigned int SCR_WIDTH = 800;
+const unsigned int SCR_HEIGHT = 800;
+
+// texture size
+const unsigned int TEXTURE_WIDTH = 1000, TEXTURE_HEIGHT = 1000;
+
+// timing 
+float deltaTime = 0.0f; // time between current frame and last frame
+float lastFrame = 0.0f; // time of last frame
+
+struct Material
 {
-	-1.0f, -1.0f , 0.0f, 0.0f, 0.0f,
-	-1.0f,  1.0f , 0.0f, 0.0f, 1.0f,
-	 1.0f,  1.0f , 0.0f, 1.0f, 1.0f,
-	 1.0f, -1.0f , 0.0f, 1.0f, 0.0f,
+	glm::vec4 color;
+	glm::vec4 emissionColor;
+	glm::vec4 specularColor;
+
+	glm::vec4 data; //{emissionStrength, smoothness, specularProbability, unused}
 };
 
-GLuint indices[] =
+struct Sphere
 {
-	0, 2, 1,
-	0, 3, 2
+	glm::vec4 data;
+	glm::vec4 materialData;
 };
 
-
-const char* screenVertexShaderSource = R"(#version 460 core
-layout (location = 0) in vec3 pos;
-layout (location = 1) in vec2 uvs;
-out vec2 UVs;
-void main()
+int main(int argc, char* argv[])
 {
-	gl_Position = vec4(pos.x, pos.y, pos.z, 1.0);
-	UVs = uvs;
-})";
-const char* screenFragmentShaderSource = R"(#version 460 core
-out vec4 FragColor;
-uniform sampler2D screen;
-in vec2 UVs;
-void main()
-{
-	FragColor = texture(screen, UVs);
-})";
-const char* screenComputeShaderSource = R"(#version 460 core
-layout(local_size_x = 8, local_size_y = 4, local_size_z = 1) in;
-layout(rgba32f, binding = 0) uniform image2D screen;
-void main()
-{
-	vec4 pixel = vec4(0.75, 0.133, 0.173, 1.0);
-	ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
-	
-	ivec2 dims = imageSize(screen);
-	float x = -(float(pixel_coords.x * 2 - dims.x) / dims.x); // transforms to [-1.0, 1.0]
-	float y = -(float(pixel_coords.y * 2 - dims.y) / dims.y); // transforms to [-1.0, 1.0]
-	float fov = 90.0;
-	vec3 cam_o = vec3(0.0, 0.0, -tan(fov / 2.0));
-	vec3 ray_o = vec3(x, y, 0.0);
-	vec3 ray_d = normalize(ray_o - cam_o);
-	vec3 sphere_c = vec3(0.0, 0.0, -5.0);
-	float sphere_r = 1.0;
-	vec3 o_c = ray_o - sphere_c;
-	float b = dot(ray_d, o_c);
-	float c = dot(o_c, o_c) - sphere_r * sphere_r;
-	float intersectionState = b * b - c;
-	vec3 intersection = ray_o + ray_d * (-b + sqrt(b * b - c));
-	if (intersectionState >= 0.0)
-	{
-		pixel = vec4((normalize(intersection - sphere_c) + 1.0) / 2.0, 1.0);
-	}
-	imageStore(screen, pixel_coords, pixel);
-}
-)";
-
-
-int main()
-{
+	// glfw: initialize and configure
+	// ------------------------------
 	glfwInit();
-
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, OPENGL_MAJOR_VERSION);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, OPENGL_MINOR_VERSION);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-	glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-	GLFWwindow* window = glfwCreateWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "OpenGL Compute Shaders", NULL, NULL);
-	if (!window)
+#ifdef __APPLE__
+	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
+
+	// glfw window creation
+	// --------------------
+	GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "LearnOpenGL", NULL, NULL);
+	if (window == NULL)
 	{
-		std::cout << "Failed to create the GLFW window\n";
+		std::cout << "Failed to create GLFW window" << std::endl;
 		glfwTerminate();
+		return -1;
 	}
 	glfwMakeContextCurrent(window);
-	glfwSwapInterval(vSync);
+	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+	glfwSwapInterval(0);
 
+	// glad: load all OpenGL function pointers
+	// ---------------------------------------
 	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
 	{
-		std::cout << "Failed to initialize OpenGL context" << std::endl;
+		std::cout << "Failed to initialize GLAD" << std::endl;
+		return -1;
 	}
-	glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 
+	// query limitations
+	// -----------------
+	int max_compute_work_group_count[3];
+	int max_compute_work_group_size[3];
+	int max_compute_work_group_invocations;
 
-	GLuint VAO, VBO, EBO;
-	glCreateVertexArrays(1, &VAO);
-	glCreateBuffers(1, &VBO);
-	glCreateBuffers(1, &EBO);
+	for (int idx = 0; idx < 3; idx++) {
+		glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, idx, &max_compute_work_group_count[idx]);
+		glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, idx, &max_compute_work_group_size[idx]);
+	}
+	glGetIntegerv(GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, &max_compute_work_group_invocations);
 
-	glNamedBufferData(VBO, sizeof(vertices), vertices, GL_STATIC_DRAW);
-	glNamedBufferData(EBO, sizeof(indices), indices, GL_STATIC_DRAW);
+	std::cout << "OpenGL Limitations: " << std::endl;
+	std::cout << "maximum number of work groups in X dimension " << max_compute_work_group_count[0] << std::endl;
+	std::cout << "maximum number of work groups in Y dimension " << max_compute_work_group_count[1] << std::endl;
+	std::cout << "maximum number of work groups in Z dimension " << max_compute_work_group_count[2] << std::endl;
 
-	glEnableVertexArrayAttrib(VAO, 0);
-	glVertexArrayAttribBinding(VAO, 0, 0);
-	glVertexArrayAttribFormat(VAO, 0, 3, GL_FLOAT, GL_FALSE, 0);
+	std::cout << "maximum size of a work group in X dimension " << max_compute_work_group_size[0] << std::endl;
+	std::cout << "maximum size of a work group in Y dimension " << max_compute_work_group_size[1] << std::endl;
+	std::cout << "maximum size of a work group in Z dimension " << max_compute_work_group_size[2] << std::endl;
 
-	glEnableVertexArrayAttrib(VAO, 1);
-	glVertexArrayAttribBinding(VAO, 1, 0);
-	glVertexArrayAttribFormat(VAO, 1, 2, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat));
+	std::cout << "Number of invocations in a single local work group that may be dispatched to a compute shader " << max_compute_work_group_invocations << std::endl;
 
-	glVertexArrayVertexBuffer(VAO, 0, VBO, 0, 5 * sizeof(GLfloat));
-	glVertexArrayElementBuffer(VAO, EBO);
+	// build and compile shaders
+	// -------------------------
+	Shader screenQuad("screenQuad.vs", "screenQuad.fs");
+	ComputeShader computeShader("computeShader.cs");
 
+	screenQuad.use();
+	screenQuad.setInt("tex", 0);
 
-	GLuint screenTex;
-	glCreateTextures(GL_TEXTURE_2D, 1, &screenTex);
-	glTextureParameteri(screenTex, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTextureParameteri(screenTex, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glTextureParameteri(screenTex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTextureParameteri(screenTex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTextureStorage2D(screenTex, 1, GL_RGBA32F, SCREEN_WIDTH, SCREEN_HEIGHT);
-	glBindImageTexture(0, screenTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
+	// Create texture for opengl operation
+	// -----------------------------------
+	unsigned int texture;
 
-	GLuint screenVertexShader = glCreateShader(GL_VERTEX_SHADER);
-	glShaderSource(screenVertexShader, 1, &screenVertexShaderSource, NULL);
-	glCompileShader(screenVertexShader);
-	GLuint screenFragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-	glShaderSource(screenFragmentShader, 1, &screenFragmentShaderSource, NULL);
-	glCompileShader(screenFragmentShader);
+	glGenTextures(1, &texture);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, TEXTURE_WIDTH, TEXTURE_HEIGHT, 0, GL_RGBA, GL_FLOAT, NULL);
 
-	GLuint screenShaderProgram = glCreateProgram();
-	glAttachShader(screenShaderProgram, screenVertexShader);
-	glAttachShader(screenShaderProgram, screenFragmentShader);
-	glLinkProgram(screenShaderProgram);
+	glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
 
-	glDeleteShader(screenVertexShader);
-	glDeleteShader(screenFragmentShader);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, texture);
 
+	//I have no idea what I am doing
 
-	GLuint computeShader = glCreateShader(GL_COMPUTE_SHADER);
-	glShaderSource(computeShader, 1, &screenComputeShaderSource, NULL);
-	glCompileShader(computeShader);
+	GLuint posSSbo;
+	GLuint velSSbo;
 
-	GLuint computeProgram = glCreateProgram();
-	glAttachShader(computeProgram, computeShader);
-	glLinkProgram(computeProgram);
+	glGenBuffers(1, &posSSbo);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, posSSbo);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, 5 * sizeof(struct Sphere), NULL, GL_STATIC_DRAW);
+	GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT; // the invalidate makes a big difference when re-writing
+	Sphere* spheres = (Sphere*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, 5 * sizeof(Sphere), bufMask);
 
+	Sphere l;
+	l.data = glm::vec4(100.0, -15.0, 93.0, 100.0);
+	l.materialData = glm::vec4(0.0, 0.0, 0.0, 0.0);
 
-	int work_grp_cnt[3];
-	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, 0, &work_grp_cnt[0]);
-	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, 1, &work_grp_cnt[1]);
-	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, 2, &work_grp_cnt[2]);
-	std::cout << "Max work groups per compute shader" <<
-		" x:" << work_grp_cnt[0] <<
-		" y:" << work_grp_cnt[1] <<
-		" z:" << work_grp_cnt[2] << "\n";
+	Sphere g;
+	g.data = glm::vec4(0.0, 40.0, -45007.0, 45000.0);
+	g.materialData = glm::vec4(3.0, 0.0, 0.0, 0.0);
 
-	int work_grp_size[3];
-	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 0, &work_grp_size[0]);
-	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 1, &work_grp_size[1]);
-	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 2, &work_grp_size[2]);
-	std::cout << "Max work group sizes" <<
-		" x:" << work_grp_size[0] <<
-		" y:" << work_grp_size[1] <<
-		" z:" << work_grp_size[2] << "\n";
+	Sphere s1;
+	s1.data = glm::vec4(0.0, 40.0, -2.0, 5.0);
+	s1.materialData = glm::vec4(1.0, 0.0, 0.0, 0.0);
 
-	int work_grp_inv;
-	glGetIntegerv(GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, &work_grp_inv);
-	std::cout << "Max invocations count per work group: " << work_grp_inv << "\n";
+	Sphere s2;
+	s2.data = glm::vec4(10.0, 40.0, -2.0, 5.0);
+	s2.materialData = glm::vec4(4.0, 0.0, 0.0, 0.0);
 
+	Sphere s3;
+	s3.data = glm::vec4(-10.0, 40.0, -2.0, 5.0);
+	s3.materialData = glm::vec4(2.0, 0.0, 0.0, 0.0);
 
+	spheres[0] = l;
+	spheres[1] = g;
+	spheres[2] = s1;
+	spheres[3] = s2;
+	spheres[4] = s3;
+
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+	Material light;
+	light.color = glm::vec4(0.0, 0.0, 0.0, 0.0);
+	light.emissionColor = glm::vec4(0.99, 0.95, 0.78, 0.0);
+	light.specularColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
+	light.data = glm::vec4(1.5, 0.0, 0.0, 0.0);
+
+	Material spec;
+	spec.color = glm::vec4(0.2, 0.2, 1.0, 0.0);
+	spec.emissionColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
+	spec.specularColor = glm::vec4(1.0, 1.0, 1.0, 0.0);
+	spec.data = glm::vec4(0.0, 1.0, 0.2, 0.0);
+
+	Material diffuse;
+	diffuse.color = glm::vec4(1.0, 0.5, 1.0, 0.0);
+	diffuse.emissionColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
+	diffuse.specularColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
+	diffuse.data = glm::vec4(0.0, 0.0, 0.0, 0.0);
+
+	Material ground;
+	ground.color = glm::vec4(1.0, 0.9, 0.9, 0.0);
+	ground.emissionColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
+	ground.specularColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
+	ground.data = glm::vec4(0.0, 0.0, 0.0, 0.0);
+
+	Material metal;
+	metal.color = glm::vec4(0.9, 0.9, 0.1, 0.0);
+	metal.emissionColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
+	metal.specularColor = glm::vec4(1.0, 1.0, 1.0, 0.0);
+	metal.data = glm::vec4(0.0, 0.99, 0.91, 0.0);
+
+	glGenBuffers(1, &velSSbo);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, velSSbo);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, 5 * sizeof(Material), NULL, GL_STATIC_DRAW);
+	Material* materials = (struct Material*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, 5 * sizeof(Material), bufMask);
+	
+	materials[0] = light;
+	materials[1] = spec;
+	materials[2] = diffuse;
+	materials[3] = ground;
+	materials[4] = metal;
+
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, posSSbo);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, velSSbo);
+
+	// render loop
+	// -----------
+	int fCounter = 0;
+	int frameCount = 0;
 	while (!glfwWindowShouldClose(window))
 	{
-		glUseProgram(computeProgram);
-		glDispatchCompute(ceil(SCREEN_WIDTH / 8), ceil(SCREEN_HEIGHT / 4), 1);
-		glMemoryBarrier(GL_ALL_BARRIER_BITS);
+		frameCount++;
+		// Set frame time
+		float currentFrame = glfwGetTime();
+		deltaTime = currentFrame - lastFrame;
+		lastFrame = currentFrame;
+		if (fCounter > 40) {
+			std::cout << "\rFPS: " << 1 / deltaTime << '    ' << std::flush;
+			fCounter = 0;
+		}
+		else {
+			fCounter++;
+		}
 
-		glUseProgram(screenShaderProgram);
-		glBindTextureUnit(0, screenTex);
-		glUniform1i(glGetUniformLocation(screenShaderProgram, "screen"), 0);
-		glBindVertexArray(VAO);
-		glDrawElements(GL_TRIANGLES, sizeof(indices) / sizeof(indices[0]), GL_UNSIGNED_INT, 0);
+		computeShader.use();
+		computeShader.setFloat("t", currentFrame);
+		computeShader.setFloat("frame", frameCount);
+		glDispatchCompute((unsigned int)TEXTURE_WIDTH / 10, (unsigned int)TEXTURE_HEIGHT / 10, 1);
 
+		// make sure writing to image has finished before read
+		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+		//glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+		// render image to quad
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		screenQuad.use();
+
+		renderQuad();
+
+		// glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
+		// -------------------------------------------------------------------------------
 		glfwSwapBuffers(window);
 		glfwPollEvents();
 	}
 
+	// optional: de-allocate all resources once they've outlived their purpose:
+	// ------------------------------------------------------------------------
+	glDeleteTextures(1, &texture);
+	glDeleteProgram(screenQuad.ID);
+	glDeleteProgram(computeShader.ID);
 
-	glfwDestroyWindow(window);
 	glfwTerminate();
+
+	return EXIT_SUCCESS;
 }
+
+// renderQuad() renders a 1x1 XY quad in NDC
+// -----------------------------------------
+unsigned int quadVAO = 0;
+unsigned int quadVBO;
+void renderQuad()
+{
+	if (quadVAO == 0)
+	{
+		float quadVertices[] = {
+			// positions        // texture Coords
+			-1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
+			-1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
+			 1.0f,  1.0f, 0.0f, 1.0f, 1.0f,
+			 1.0f, -1.0f, 0.0f, 1.0f, 0.0f,
+		};
+		// setup plane VAO
+		glGenVertexArrays(1, &quadVAO);
+		glGenBuffers(1, &quadVBO);
+		glBindVertexArray(quadVAO);
+		glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+		glEnableVertexAttribArray(1);
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+	}
+	glBindVertexArray(quadVAO);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindVertexArray(0);
+}
+
+// glfw: whenever the window size changed (by OS or user resize) this callback function executes
+// ---------------------------------------------------------------------------------------------
+void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+{
+	// make sure the viewport matches the new window dimensions; note that width and 
+	// height will be significantly larger than specified on retina displays.
+	glViewport(0, 0, width, height);
+}
+

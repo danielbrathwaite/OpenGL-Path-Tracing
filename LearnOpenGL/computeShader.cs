@@ -19,7 +19,7 @@ struct Sphere
     vec4 materialData;
 };
 
-layout (std430, binding = 4) buffer GeometryBlock {
+layout (std140, binding = 4) buffer GeometryBlock {
     Sphere spheres [5];
 };
 
@@ -78,7 +78,7 @@ vec3 random_unit_vector(float seed)
     vec3 ret;
     for(float i = 0; i < safety; i += 1.0)
     {
-        ret = vec3(random(seed + i * 2298), random(seed * 18273 + i * 3487), random(seed * 1388.38 + i * 823769));
+        ret = vec3(random(seed + i * 2298) * 2.0 - 1.0, random(seed * 18273 + i * 3487) * 2.0 - 1.0, random(seed * 1388.38 + i * 823769) * 2.0 - 1.0);
         if(length(ret) <= 1.0)
         {
             return normalize(ret);
@@ -87,21 +87,25 @@ vec3 random_unit_vector(float seed)
     return vec3(1.0, 0.0, 0.0);
 }
 
-vec4 ACESFilm(vec3 val)
+float ACESFilm(float val)
 {
     float a = 2.51f;
     float b = 0.03f;
     float c = 2.43f;
     float d = 0.59f;
     float e = 0.14f;
-    vec3 tone_mapped = (val * (a * val + b)) / (val * (c * val + d) + e);
-    vec3 clamped = clamp(val, 0.0, 1.0);
-    return vec4(clamped, 1.0);
+    float tone_mapped = (val * (a * val + b)) / (val * (c * val + d) + e);
+    return clamp(tone_mapped, 0.0, 1.0);
 }
 
-vec4 getEnvironmentLight(vec3 ray_o, vec3 ray_d)
+vec4 ACESFilmCol(vec3 val)
 {
-    return vec4(0.0);
+    return vec4(ACESFilm(val.r), ACESFilm(val.g), ACESFilm(val.b), 1.0);
+}
+
+vec3 getEnvironmentLight(vec3 ray_o, vec3 ray_d)
+{
+    return vec3(0.0);
 }
 
 float hit_sphere(vec3 ray_o, vec3 ray_d, int sphere_index)
@@ -136,7 +140,7 @@ void calculateRayCollision(vec3 ray_o, vec3 ray_d, inout vec3 normal, inout vec3
             hit = true;
             t = hit_t;
             normal = normalize(ray_o + ray_d * hit_t - spheres[sphere_index].data.xyz);
-            hitPoint = ray_o + ray_d * (hit_t - 0.001);
+            hitPoint = ray_o + ray_d * hit_t;
             spherei = sphere_index;
         }
     }
@@ -146,8 +150,8 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, float seed)
 {
     int maxBounceCount = 10;
 
-    vec4 incomingLight = vec4(0.0);
-    vec4 rayColor = vec4(1.0);
+    vec3 incomingLight = vec3(0.0);
+    vec3 rayColor = vec3(1.0);
 
     //running values
 
@@ -168,17 +172,22 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, float seed)
             vec3 diffuseDir = normalize(normal + random_unit_vector(seed + i * 129837.828));
             vec3 specularDir = reflect(ray_d, normal);
 
+            Material hit_mat = materials[int(spheres[spherei].materialData[0])];
+            float specularProbability = hit_mat.data.z;
+            float smoothness = hit_mat.data.y;
+            float emissionStrength = hit_mat.data.x;
+
             float isSpecularBounce = 0.0;
-            if (materials[int(spheres[spherei].materialData[0])].data.z > random(seed + i * 420883.387))
+            if (specularProbability > random(seed + i * 420883.387))
             {
                 isSpecularBounce = 1.0;
             }
 
-            ray_d = mix(diffuseDir, specularDir, materials[int(spheres[spherei].materialData[0])].data.y * isSpecularBounce);
+            ray_d = mix(diffuseDir, specularDir, smoothness * isSpecularBounce);
 
-            vec4 emittedLight = materials[int(spheres[spherei].materialData[0])].emissionColor * materials[int(spheres[spherei].materialData[0])].data.x;
+            vec3 emittedLight = hit_mat.emissionColor.rgb * emissionStrength;
             incomingLight += emittedLight * rayColor;
-            rayColor = rayColor * mix(materials[int(spheres[spherei].materialData[0])].color, materials[int(spheres[spherei].materialData[0])].specularColor, isSpecularBounce);
+            rayColor = rayColor * mix(hit_mat.color.rgb, hit_mat.specularColor.rgb, isSpecularBounce);
         }
         else
         {
@@ -187,13 +196,12 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, float seed)
         }
     }
 
-    return incomingLight.xyz;
+    return incomingLight;
 }
 
 void main()
 {
-    //boilerplate
-    int raysPerFrame = 10;
+    int raysPerPixel = 10;
 
     vec3 pixel = vec3(0.0, 0.0, 0.0);
     ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
@@ -212,12 +220,13 @@ void main()
     vec3 ray_o = forward + right * x + up * z;
     vec3 ray_d = normalize(ray_o - cam_o);
 
-    for (int rays = 0; rays < raysPerFrame; rays++)
-    {
-        pixel += Trace(ray_o, ray_d, frame * 10938.873 + rays * 927 + pixel_coords.y * 109736 + pixel_coords.x * 128737);
+    for (int rays = 0; rays < raysPerPixel; rays++) {
+        pixel += Trace(ray_o, ray_d, /*frame * 10938.873 + */rays * 927 + pixel_coords.y * 109736 + pixel_coords.x * 128737);
     }
-    pixel /= float(raysPerFrame);
+    pixel /= float(raysPerPixel);
+    vec4 final_color = ACESFilmCol(pixel);
+
     //if(random(t * 2837.8263 + pixel_coords.y * 109736 + pixel_coords.x * 128737) > 0.5) { pixel = vec3(1.0); }
-    imageStore(imgOutput, pixel_coords, ACESFilm(pixel));
+    imageStore(imgOutput, pixel_coords, final_color);
 }
 
