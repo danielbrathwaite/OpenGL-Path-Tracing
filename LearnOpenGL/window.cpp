@@ -229,6 +229,19 @@ int main(int argc, char* argv[])
 			fCounter++;
 		}
 
+		//this is maybe how to write to buffer
+
+		spheres[2].data.z = 2.0 * sin(currentFrame * 3.0) - 2.0;
+		spheres[3].data.z = 2.0 * cos(currentFrame * 3.0) - 2.0;
+		spheres[4].data.z = 2.0 * sin(currentFrame * 3.0 + 3.1415) - 2.0;
+
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, posSSbo);
+		glBufferData(GL_SHADER_STORAGE_BUFFER, 5 * sizeof(struct Sphere), spheres, GL_STATIC_DRAW); //sizeof(data) only works for statically sized C/C++ arrays.
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, posSSbo);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0); // unbind
+
+		//end my weird code
+
 		computeShader.use();
 		computeShader.setFloat("t", currentFrame);
 		computeShader.setFloat("frame", frameCount);

@@ -148,7 +148,7 @@ void calculateRayCollision(vec3 ray_o, vec3 ray_d, inout vec3 normal, inout vec3
 
 vec3 Trace(vec3 ray_o, vec3 ray_d, float seed)
 {
-    int maxBounceCount = 10;
+    int maxBounceCount = 4;
 
     vec3 incomingLight = vec3(0.0);
     vec3 rayColor = vec3(1.0);
@@ -221,12 +221,11 @@ void main()
     vec3 ray_d = normalize(ray_o - cam_o);
 
     for (int rays = 0; rays < raysPerPixel; rays++) {
-        pixel += Trace(ray_o, ray_d, /*frame * 10938.873 + */rays * 927 + pixel_coords.y * 109736 + pixel_coords.x * 128737);
+        pixel += Trace(ray_o, ray_d, frame * 10938.873 + rays * 927 + pixel_coords.y * 109736 + pixel_coords.x * 128737);
     }
     pixel /= float(raysPerPixel);
     vec4 final_color = ACESFilmCol(pixel);
 
-    //if(random(t * 2837.8263 + pixel_coords.y * 109736 + pixel_coords.x * 128737) > 0.5) { pixel = vec3(1.0); }
     imageStore(imgOutput, pixel_coords, final_color);
 }
 
