@@ -37,6 +37,7 @@ layout(rgba32f, binding = 0) uniform image2D imgOutput;
 
 layout(location = 0) uniform float t;                 /* Time */
 layout(location = 1) uniform int frame;
+layout(location = 2) uniform int accumulate;
 
 // ----------------------------------------------------------------------------
 //
@@ -200,13 +201,13 @@ void main()
     vec3 pixel = vec3(0.0, 0.0, 0.0);
     ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
 
-    uint pixelIndex = pixel_coords.y * 800 + pixel_coords.x;
-    uint randomState = pixelIndex + frame * 719393;
-
     ivec2 dims = imageSize(imgOutput);
 
-    vec3 up = vec3(0.0, 0.0, 0.8);
-    vec3 right = vec3(0.8, 0.0, 0.0);
+    uint pixelIndex = pixel_coords.y * dims.x + pixel_coords.x;
+    uint randomState = pixelIndex + frame * 719393;
+
+    vec3 up = vec3(0.0, 0.0, dims.y / 1000.0);
+    vec3 right = vec3(dims.x / 1000.0, 0.0, 0.0);
 
     vec3 forward = vec3(0.0, 1.0, 0.0);
 
@@ -222,10 +223,12 @@ void main()
     }
     pixel /= float(raysPerPixel);
     vec4 final_color = ACESFilmCol(pixel);
-    
-    //degeneracy
-    vec4 previous_color = imageLoad(imgOutput, pixel_coords).rgba;
-    //end degeneracy
+
+    vec4 previous_color = vec4(0.0);
+
+    if (accumulate == 1) {
+        previous_color = imageLoad(imgOutput, pixel_coords).rgba;
+    }
 
     imageStore(imgOutput, pixel_coords, final_color + previous_color);
 }

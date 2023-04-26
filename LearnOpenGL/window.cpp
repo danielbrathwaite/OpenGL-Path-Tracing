@@ -17,15 +17,17 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void renderQuad();
 
 // settings
-const unsigned int SCR_WIDTH = 800;
+const unsigned int SCR_WIDTH = 1000;
 const unsigned int SCR_HEIGHT = 800;
 
 // texture size
-const unsigned int TEXTURE_WIDTH = 1000, TEXTURE_HEIGHT = 1000;
+const unsigned int TEXTURE_WIDTH = SCR_WIDTH, TEXTURE_HEIGHT = SCR_HEIGHT;
 
 // timing 
 float deltaTime = 0.0f; // time between current frame and last frame
 float lastFrame = 0.0f; // time of last frame
+
+int accumulate = 0;
 
 struct Material
 {
@@ -231,22 +233,28 @@ int main(int argc, char* argv[])
 
 		//this is maybe how to write to buffer
 
-		/*spheres[2].data.z = 2.0 * sin(currentFrame * 3.0) - 2.0;
-		spheres[3].data.z = 2.0 * cos(currentFrame * 3.0) - 2.0;
-		spheres[4].data.z = 2.0 * sin(currentFrame * 3.0 - 3.1415) - 2.0;
+		spheres[2].data.z = 7.0 * sin(currentFrame * 2.0) - 7.0;
+		spheres[3].data.z = 7.0 * sin(currentFrame * 2.0 + 3.141592 * 0.6666) - 7.0;
+		spheres[4].data.z = 7.0 * sin(currentFrame * 2.0 + 3.141592 * 1.3333) - 7.0;
+
+		spheres[2].data.w = 5 + 2.6 * sin(currentFrame * 0.7);
+		spheres[3].data.w = 5 + 2.6 * sin(currentFrame * 0.7);
+		spheres[4].data.w = 5 + 2.6 * sin(currentFrame * 0.7);
 
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, posSSbo);
 		glBufferData(GL_SHADER_STORAGE_BUFFER, 5 * sizeof(struct Sphere), spheres, GL_STATIC_DRAW); //sizeof(data) only works for statically sized C/C++ arrays.
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, posSSbo);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0); // unbind*/
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0); // unbind
 
 		screenQuad.setInt("frame", frameCount);
+		screenQuad.setInt("accumulate", accumulate);
 
 		//end my weird code
 
 		computeShader.use();
 		computeShader.setFloat("t", currentFrame);
 		computeShader.setInt("frame", frameCount);
+		computeShader.setInt("accumulate", accumulate);
 		glDispatchCompute((unsigned int)TEXTURE_WIDTH / 10, (unsigned int)TEXTURE_HEIGHT / 10, 1);
 
 		// make sure writing to image has finished before read

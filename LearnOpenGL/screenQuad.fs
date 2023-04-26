@@ -8,10 +8,16 @@ in vec2 TexCoords;
 uniform sampler2D tex;
 
 layout(location = 1) uniform int frame;
+layout(location = 2) uniform int accumulate;
 
 void main()
 {             
-    vec3 texCol = texture(tex, TexCoords).rgb / float(frame);      
+    vec3 texCol;
+    if(accumulate == 1){
+        texCol = texture(tex, TexCoords).rgb / float(frame);      
+    }else{
+        texCol = texture(tex, TexCoords).rgb;  
+    }
     FragColor = vec4(texCol, 1.0);
 }
 
