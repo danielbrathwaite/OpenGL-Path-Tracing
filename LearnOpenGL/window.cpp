@@ -165,33 +165,33 @@ int main(int argc, char* argv[])
 	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
 	Material light;
-	light.color = glm::vec4(0.0, 0.0, 0.0, 0.0);
-	light.emissionColor = glm::vec4(0.99, 0.95, 0.78, 0.0);
+	light.color = glm::vec4(0.0, 0.0, 0.0, 1.0);
+	light.emissionColor = glm::vec4(0.99, 0.95, 0.78, 1.0);
 	light.specularColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
 	light.data = glm::vec4(1.5, 0.0, 0.0, 0.0);
 
 	Material spec;
-	spec.color = glm::vec4(0.2, 0.2, 1.0, 0.0);
-	spec.emissionColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
-	spec.specularColor = glm::vec4(1.0, 1.0, 1.0, 0.0);
+	spec.color = glm::vec4(0.2, 0.2, 1.0, 1.0);
+	spec.emissionColor = glm::vec4(0.0, 0.0, 0.0, 1.0);
+	spec.specularColor = glm::vec4(1.0, 1.0, 1.0, 1.0);
 	spec.data = glm::vec4(0.0, 1.0, 0.2, 0.0);
 
 	Material diffuse;
-	diffuse.color = glm::vec4(1.0, 0.5, 1.0, 0.0);
-	diffuse.emissionColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
-	diffuse.specularColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
+	diffuse.color = glm::vec4(1.0, 0.5, 1.0, 1.0);
+	diffuse.emissionColor = glm::vec4(0.0, 0.0, 0.0, 1.0);
+	diffuse.specularColor = glm::vec4(0.0, 0.0, 0.0, 1.0);
 	diffuse.data = glm::vec4(0.0, 0.0, 0.0, 0.0);
 
 	Material ground;
-	ground.color = glm::vec4(1.0, 0.9, 0.9, 0.0);
-	ground.emissionColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
-	ground.specularColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
+	ground.color = glm::vec4(1.0, 0.9, 0.9, 1.0);
+	ground.emissionColor = glm::vec4(0.0, 0.0, 0.0, 1.0);
+	ground.specularColor = glm::vec4(0.0, 0.0, 0.0, 1.0);
 	ground.data = glm::vec4(0.0, 0.0, 0.0, 0.0);
 
 	Material metal;
-	metal.color = glm::vec4(0.9, 0.9, 0.1, 0.0);
-	metal.emissionColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
-	metal.specularColor = glm::vec4(1.0, 1.0, 1.0, 0.0);
+	metal.color = glm::vec4(0.9, 0.9, 0.1, 1.0);
+	metal.emissionColor = glm::vec4(0.0, 0.0, 0.0, 1.0);
+	metal.specularColor = glm::vec4(1.0, 1.0, 1.0, 1.0);
 	metal.data = glm::vec4(0.0, 0.99, 0.91, 0.0);
 
 	glGenBuffers(1, &velSSbo);
@@ -222,7 +222,7 @@ int main(int argc, char* argv[])
 		deltaTime = currentFrame - lastFrame;
 		lastFrame = currentFrame;
 		if (fCounter > 40) {
-			std::cout << "\rFPS: " << 1 / deltaTime << '    ' << std::flush;
+			std::cout << "\rFPS: " << 1 / deltaTime << "      Writes: " << frameCount << "   " << std::flush;
 			fCounter = 0;
 		}
 		else {
@@ -231,20 +231,22 @@ int main(int argc, char* argv[])
 
 		//this is maybe how to write to buffer
 
-		spheres[2].data.z = 2.0 * sin(currentFrame * 3.0) - 2.0;
+		/*spheres[2].data.z = 2.0 * sin(currentFrame * 3.0) - 2.0;
 		spheres[3].data.z = 2.0 * cos(currentFrame * 3.0) - 2.0;
-		spheres[4].data.z = 2.0 * sin(currentFrame * 3.0 + 3.1415) - 2.0;
+		spheres[4].data.z = 2.0 * sin(currentFrame * 3.0 - 3.1415) - 2.0;
 
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, posSSbo);
 		glBufferData(GL_SHADER_STORAGE_BUFFER, 5 * sizeof(struct Sphere), spheres, GL_STATIC_DRAW); //sizeof(data) only works for statically sized C/C++ arrays.
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, posSSbo);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0); // unbind
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0); // unbind*/
+
+		screenQuad.setInt("frame", frameCount);
 
 		//end my weird code
 
 		computeShader.use();
 		computeShader.setFloat("t", currentFrame);
-		computeShader.setFloat("frame", frameCount);
+		computeShader.setInt("frame", frameCount);
 		glDispatchCompute((unsigned int)TEXTURE_WIDTH / 10, (unsigned int)TEXTURE_HEIGHT / 10, 1);
 
 		// make sure writing to image has finished before read

@@ -11,7 +11,7 @@ struct Material
     vec4 specularColor;
 
     vec4 data; //{emissionStrength, smoothness, specularProbability, unused}
-}globalMat;
+};
 
 struct Sphere
 {
@@ -36,7 +36,7 @@ layout (std140, binding = 5) buffer MaterialBlock {
 layout(rgba32f, binding = 0) uniform image2D imgOutput;
 
 layout(location = 0) uniform float t;                 /* Time */
-layout(location = 1) uniform float frame;
+layout(location = 1) uniform int frame;
 
 // ----------------------------------------------------------------------------
 //
@@ -45,46 +45,35 @@ layout(location = 1) uniform float frame;
 // ----------------------------------------------------------------------------
 
 
-// A single iteration of Bob Jenkins' One-At-A-Time hashing algorithm.
-uint hash(uint x)
+uint NextRandom(inout uint state)
 {
-    x += (x << 10u);
-    x ^= (x >> 6u);
-    x += (x << 3u);
-    x ^= (x >> 11u);
-    x += (x << 15u);
-    return x;
+    state = state * 747796405 + 2891336453;
+    uint result = ((state >> ((state >> 28) + 4)) ^ state) * 277803737;
+    result = (result >> 22) ^ result;
+    return result;
 }
 
-// Construct a float with half-open range [0:1] using low 23 bits.
-// All zeroes yields 0.0, all ones yields the next smallest representable value below 1.0.
-float floatConstruct(uint m)
+float random(inout uint state)
 {
-    const uint ieeeMantissa = 0x007FFFFFu; // binary32 mantissa bitmask
-    const uint ieeeOne = 0x3F800000u; // 1.0 in IEEE binary32
-
-    m &= ieeeMantissa;                     // Keep only mantissa bits (fractional part)
-    m |= ieeeOne;                          // Add fractional part to 1.0
-
-    float f = uintBitsToFloat(m);       // Range [1:2]
-    return f - 1.0;                        // Range [0:1]
+    return NextRandom(state) / 4294967295.0; // 2^32 - 1
 }
 
-float random(float seed) { return floatConstruct(hash(floatBitsToUint(seed))); }
-
-vec3 random_unit_vector(float seed)
+vec3 random_unit_vector(inout uint state)
 {
     float safety = 100.0;
     vec3 ret;
     for(float i = 0; i < safety; i += 1.0)
     {
-        ret = vec3(random(seed + i * 2298) * 2.0 - 1.0, random(seed * 18273 + i * 3487) * 2.0 - 1.0, random(seed * 1388.38 + i * 823769) * 2.0 - 1.0);
+        float x = random(state) * 2.0 - 1.0;
+        float y = random(state) * 2.0 - 1.0;
+        float z = random(state) * 2.0 - 1.0;
+        ret = vec3(x,y,z);
         if(length(ret) <= 1.0)
         {
             return normalize(ret);
         }
     }
-    return vec3(1.0, 0.0, 0.0);
+    return normalize(ret);
 }
 
 float ACESFilm(float val)
@@ -108,10 +97,10 @@ vec3 getEnvironmentLight(vec3 ray_o, vec3 ray_d)
     return vec3(0.0);
 }
 
-float hit_sphere(vec3 ray_o, vec3 ray_d, int sphere_index)
+float hit_sphere(vec3 ray_o, vec3 ray_d, int sphere_ind)
 {
-    vec3 sphere_p = spheres[sphere_index].data.xyz;
-    float sphere_r = spheres[sphere_index].data.w;
+    vec3 sphere_p = spheres[sphere_ind].data.xyz;
+    float sphere_r = spheres[sphere_ind].data.w;
 
     vec3 oc = ray_o - sphere_p;
     float a = dot(ray_d, ray_d);
@@ -125,30 +114,35 @@ float hit_sphere(vec3 ray_o, vec3 ray_d, int sphere_index)
     }
     else
     {
-        return (-b - sqrt(discriminant)) / (2.0 * a);
+        return ((-b - sqrt(discriminant)) / (2.0 * a));
     }
 }
 
-void calculateRayCollision(vec3 ray_o, vec3 ray_d, inout vec3 normal, inout vec3 hitPoint, inout bool hit, inout int spherei)
+void calculateRayCollision(vec3 ray_o, vec3 ray_d, inout vec3 normal, inout vec3 hitPoint, inout bool hit, out int materialIndex)
 {
     float t = 1. / 0.;
 
-    for (int sphere_index = 0; sphere_index < 10; sphere_index++) {
+    for (int sphere_index = 0; sphere_index < 5; sphere_index++) {
         float hit_t = hit_sphere(ray_o, ray_d, sphere_index);
-        if (hit_t > 0.0001 && hit_t < t)
+        if (hit_t > 0.000001 && hit_t < t)
         {
+            vec3 sphere_p = spheres[sphere_index].data.xyz;
+            vec3 potential_normal = normalize(ray_o + (hit_t * ray_d) - sphere_p);
+            if(dot(potential_normal, ray_d) > 0.0) { continue; }
             hit = true;
             t = hit_t;
-            normal = normalize(ray_o + ray_d * hit_t - spheres[sphere_index].data.xyz);
-            hitPoint = ray_o + ray_d * hit_t;
-            spherei = sphere_index;
+            normal = potential_normal;
+            hitPoint = ray_o + hit_t * ray_d;
+            materialIndex = int(spheres[sphere_index].materialData.x);
         }
     }
+
+    return;
 }
 
-vec3 Trace(vec3 ray_o, vec3 ray_d, float seed)
+vec3 Trace(vec3 ray_o, vec3 ray_d, inout uint state)
 {
-    int maxBounceCount = 4;
+    int maxBounceCount = 5;
 
     vec3 incomingLight = vec3(0.0);
     vec3 rayColor = vec3(1.0);
@@ -158,32 +152,33 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, float seed)
     vec3 normal = vec3(0.0);
     vec3 hitPoint = vec3(0.0);
     bool hit = false;
-    int spherei = 0;
+    int materialInd;
 
     //--------------
-    for (int i = 0; i < maxBounceCount; i++)
+    for (int i = 0; i <= maxBounceCount; i++)
     {
-
-        calculateRayCollision(ray_o, ray_d, normal, hitPoint, hit, spherei);
+        hit = false;
+        calculateRayCollision(ray_o, ray_d, normal, hitPoint, hit, materialInd);
 
         if (hit)
         {
             ray_o = hitPoint;
-            vec3 diffuseDir = normalize(normal + random_unit_vector(seed + i * 129837.828));
-            vec3 specularDir = reflect(ray_d, normal);
+            vec3 diffuseDir = normalize(normal + random_unit_vector(state));
 
-            Material hit_mat = materials[int(spheres[spherei].materialData[0])];
+            vec3 specularDir = normalize(reflect(ray_d, normal));
+
+            Material hit_mat = materials[materialInd];
             float specularProbability = hit_mat.data.z;
             float smoothness = hit_mat.data.y;
             float emissionStrength = hit_mat.data.x;
 
             float isSpecularBounce = 0.0;
-            if (specularProbability > random(seed + i * 420883.387))
+            if (specularProbability > random(state))
             {
                 isSpecularBounce = 1.0;
             }
 
-            ray_d = mix(diffuseDir, specularDir, smoothness * isSpecularBounce);
+            ray_d = mix(diffuseDir, specularDir, (smoothness * isSpecularBounce));
 
             vec3 emittedLight = hit_mat.emissionColor.rgb * emissionStrength;
             incomingLight += emittedLight * rayColor;
@@ -191,7 +186,6 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, float seed)
         }
         else
         {
-            incomingLight += getEnvironmentLight(ray_d, ray_o);
             break;
         }
     }
@@ -201,10 +195,13 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, float seed)
 
 void main()
 {
-    int raysPerPixel = 10;
+    int raysPerPixel = 60;
 
     vec3 pixel = vec3(0.0, 0.0, 0.0);
     ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+
+    uint pixelIndex = pixel_coords.y * 800 + pixel_coords.x;
+    uint randomState = pixelIndex + frame * 719393;
 
     ivec2 dims = imageSize(imgOutput);
 
@@ -213,19 +210,23 @@ void main()
 
     vec3 forward = vec3(0.0, 1.0, 0.0);
 
-    float x = float(pixel_coords.x) / dims.x - 0.5;
-    float z = float(pixel_coords.y) / dims.y - 0.5 ;
-
-    vec3 cam_o = vec3(0.0, 0.0, 0.0);
-    vec3 ray_o = forward + right * x + up * z;
-    vec3 ray_d = normalize(ray_o - cam_o);
-
     for (int rays = 0; rays < raysPerPixel; rays++) {
-        pixel += Trace(ray_o, ray_d, frame * 10938.873 + rays * 927 + pixel_coords.y * 109736 + pixel_coords.x * 128737);
+        float x = float(pixel_coords.x + random(randomState)) / dims.x - 0.5;
+        float z = float(pixel_coords.y + random(randomState)) / dims.y - 0.5;
+
+        vec3 cam_o = vec3(0.0, 0.0, 0.0);
+        vec3 ray_o = forward + right * x + up * z;
+        vec3 ray_d = normalize(ray_o - cam_o);
+
+        pixel += Trace(cam_o, ray_d, randomState);
     }
     pixel /= float(raysPerPixel);
     vec4 final_color = ACESFilmCol(pixel);
+    
+    //degeneracy
+    vec4 previous_color = imageLoad(imgOutput, pixel_coords).rgba;
+    //end degeneracy
 
-    imageStore(imgOutput, pixel_coords, final_color);
+    imageStore(imgOutput, pixel_coords, final_color + previous_color);
 }
 
