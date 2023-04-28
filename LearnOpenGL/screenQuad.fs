@@ -12,12 +12,7 @@ layout(location = 2) uniform int accumulate;
 
 void main()
 {             
-    vec3 texCol;
-    if(accumulate == 1){
-        texCol = texture(tex, TexCoords).rgb / float(frame);      
-    }else{
-        texCol = texture(tex, TexCoords).rgb;  
-    }
+    vec3 texCol = texture(tex, TexCoords).rgb;  
     FragColor = vec4(texCol, 1.0);
 }
 

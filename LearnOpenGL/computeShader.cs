@@ -19,19 +19,26 @@ struct Sphere
     vec4 materialData;
 };
 
-layout (std140, binding = 4) buffer GeometryBlock {
+struct Triangle
+{
+    vec4 v0;
+    vec4 v1;
+    vec4 v2;
+    vec4 materialData;
+};
+
+layout (std140, binding = 4) buffer SphereBlock {
     Sphere spheres [5];
 };
 
-layout (std140, binding = 5) buffer MaterialBlock {
-    Material materials [5];
+layout(std140, binding = 5) buffer TriangleBlock
+{
+    Triangle triangles [8];
 };
 
-// ----------------------------------------------------------------------------
-//
-// uniforms
-//
-// ----------------------------------------------------------------------------
+layout (std140, binding = 6) buffer MaterialBlock {
+    Material materials [5];
+};
 
 layout(rgba32f, binding = 0) uniform image2D imgOutput;
 
@@ -39,11 +46,9 @@ layout(location = 0) uniform float t;                 /* Time */
 layout(location = 1) uniform int frame;
 layout(location = 2) uniform int accumulate;
 
-// ----------------------------------------------------------------------------
-//
-// functions
-//
-// ----------------------------------------------------------------------------
+const int numSpheres = 5;
+const int numTriangles = 8;
+
 
 
 uint NextRandom(inout uint state)
@@ -119,22 +124,72 @@ float hit_sphere(vec3 ray_o, vec3 ray_d, int sphere_ind)
     }
 }
 
+float hit_triangle(vec3 ray_o, vec3 ray_d, int triangle_ind, out vec3 normal)
+{
+    Triangle test = triangles[triangle_ind];
+
+    vec3 v0 = test.v0.xyz;
+    vec3 v1 = test.v1.xyz;
+    vec3 v2 = test.v2.xyz;
+
+    vec3 a = v1 - v0; // edge 0
+    vec3 b = v2 - v0; // edge 1
+    vec3 n = cross(a, b); // this is the triangle's normal
+    n = normalize(n);
+
+    normal = n;
+
+    float d = -dot(n, v0);
+    float t = -(dot(n, ray_o) + d) / dot(n, ray_d);
+
+    if (t < 0) { return -1.0; }
+
+    vec3 p = ray_o + t * ray_d;
+
+    vec3 edge0 = v1 - v0;
+    vec3 edge1 = v2 - v1;
+    vec3 edge2 = v0 - v2;
+    vec3 C0 = p - v0;
+    vec3 C1 = p - v1;
+    vec3 C2 = p - v2;
+    if (dot(n, cross(edge0, C0)) > 0 &&
+        dot(n, cross(edge1, C1)) > 0 &&
+        dot(n, cross(edge2, C2)) > 0) return t; // P is inside the triangle
+
+    return -1.0;
+}
+
 void calculateRayCollision(vec3 ray_o, vec3 ray_d, inout vec3 normal, inout vec3 hitPoint, inout bool hit, out int materialIndex)
 {
     float t = 1. / 0.;
 
-    for (int sphere_index = 0; sphere_index < 5; sphere_index++) {
+    for (int sphere_index = 0; sphere_index < numSpheres; sphere_index++) {
         float hit_t = hit_sphere(ray_o, ray_d, sphere_index);
-        if (hit_t > 0.000001 && hit_t < t)
+        if (hit_t > 0.001 && hit_t < t)
         {
             vec3 sphere_p = spheres[sphere_index].data.xyz;
             vec3 potential_normal = normalize(ray_o + (hit_t * ray_d) - sphere_p);
-            if(dot(potential_normal, ray_d) > 0.0) { continue; }
+            //if(dot(potential_normal, ray_d) > 0.0) { continue; }
             hit = true;
             t = hit_t;
             normal = potential_normal;
             hitPoint = ray_o + hit_t * ray_d;
             materialIndex = int(spheres[sphere_index].materialData.x);
+        }
+    }
+
+    vec3 running_normal;
+    for (int triangle_index = 0; triangle_index < numTriangles; triangle_index++)
+    {
+        float hit_t = hit_triangle(ray_o, ray_d, triangle_index, running_normal);
+        if(hit_t > 0.001 && hit_t < t)
+        {
+            //if (dot(running_normal, ray_d) > 0.0) { continue; }
+            hit = true;
+            t = hit_t;
+            normal = running_normal;
+            hitPoint = ray_o + hit_t * ray_d;
+            materialIndex = int(triangles[triangle_index].materialData.x);
         }
     }
 
@@ -196,7 +251,7 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, inout uint state)
 
 void main()
 {
-    int raysPerPixel = 60;
+    int raysPerPixel =100;
 
     vec3 pixel = vec3(0.0, 0.0, 0.0);
     ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
@@ -222,14 +277,15 @@ void main()
         pixel += Trace(cam_o, ray_d, randomState);
     }
     pixel /= float(raysPerPixel);
-    vec4 final_color = ACESFilmCol(pixel);
+    vec4 aces_color = ACESFilmCol(pixel);
 
-    vec4 previous_color = vec4(0.0);
+    vec4 final_color = aces_color; 
 
     if (accumulate == 1) {
-        previous_color = imageLoad(imgOutput, pixel_coords).rgba;
+        vec4 previous_color = imageLoad(imgOutput, pixel_coords).rgba;
+        final_color = previous_color * (float(frame) - 1.0) / float(frame) + aces_color * 1.0 / float(frame);
     }
 
-    imageStore(imgOutput, pixel_coords, final_color + previous_color);
+    imageStore(imgOutput, pixel_coords, final_color);
 }
 
