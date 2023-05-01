@@ -33,7 +33,7 @@ layout (std140, binding = 4) buffer SphereBlock {
 
 layout(std140, binding = 5) buffer TriangleBlock
 {
-    Triangle triangles [8];
+    Triangle triangles [6258];
 };
 
 layout (std140, binding = 6) buffer MaterialBlock {
@@ -47,7 +47,7 @@ layout(location = 1) uniform int frame;
 layout(location = 2) uniform int accumulate;
 
 const int numSpheres = 5;
-const int numTriangles = 8;
+const int numTriangles = 6258;
 
 
 
@@ -169,7 +169,7 @@ void calculateRayCollision(vec3 ray_o, vec3 ray_d, inout vec3 normal, inout vec3
         {
             vec3 sphere_p = spheres[sphere_index].data.xyz;
             vec3 potential_normal = normalize(ray_o + (hit_t * ray_d) - sphere_p);
-            //if(dot(potential_normal, ray_d) > 0.0) { continue; }
+            if (dot(potential_normal, ray_d) > 0.0) { potential_normal = -1.0 * potential_normal; }//continue; }
             hit = true;
             t = hit_t;
             normal = potential_normal;
@@ -184,7 +184,7 @@ void calculateRayCollision(vec3 ray_o, vec3 ray_d, inout vec3 normal, inout vec3
         float hit_t = hit_triangle(ray_o, ray_d, triangle_index, running_normal);
         if(hit_t > 0.001 && hit_t < t)
         {
-            //if (dot(running_normal, ray_d) > 0.0) { continue; }
+            if (dot(running_normal, ray_d) > 0.0) { running_normal = -1.0 * running_normal; }//continue; }
             hit = true;
             t = hit_t;
             normal = running_normal;
@@ -251,7 +251,7 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, inout uint state)
 
 void main()
 {
-    int raysPerPixel =100;
+    int raysPerPixel = 1;
 
     vec3 pixel = vec3(0.0, 0.0, 0.0);
     ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
@@ -270,20 +270,19 @@ void main()
         float x = float(pixel_coords.x + random(randomState)) / dims.x - 0.5;
         float z = float(pixel_coords.y + random(randomState)) / dims.y - 0.5;
 
-        vec3 cam_o = vec3(0.0, 0.0, 0.0);
-        vec3 ray_o = forward + right * x + up * z;
-        vec3 ray_d = normalize(ray_o - cam_o);
+        vec3 cam_o = vec3(0.0, -6.0, 1.0);
+        vec3 ray_d = forward + right * x + up * z;
+        ray_d = normalize(ray_d);
 
         pixel += Trace(cam_o, ray_d, randomState);
     }
     pixel /= float(raysPerPixel);
-    vec4 aces_color = ACESFilmCol(pixel);
 
-    vec4 final_color = aces_color; 
+    vec4 final_color = vec4(pixel, 1.0); 
 
     if (accumulate == 1) {
         vec4 previous_color = imageLoad(imgOutput, pixel_coords).rgba;
-        final_color = previous_color * (float(frame) - 1.0) / float(frame) + aces_color * 1.0 / float(frame);
+        final_color = (previous_color * ((float(frame) - 1.0) / float(frame))) + (vec4(pixel, 1.0) / float(frame));
     }
 
     imageStore(imgOutput, pixel_coords, final_color);
