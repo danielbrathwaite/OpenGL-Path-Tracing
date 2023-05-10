@@ -7,8 +7,7 @@ in vec2 TexCoords;
 
 uniform sampler2D tex;
 
-layout(location = 1) uniform int frame;
-layout(location = 2) uniform int accumulate;
+//layout(location = 1) uniform int var_name;
 
 float ACESFilm(float val)
 {

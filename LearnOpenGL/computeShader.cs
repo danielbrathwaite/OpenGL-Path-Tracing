@@ -33,11 +33,18 @@ layout (std140, binding = 4) buffer SphereBlock {
 
 layout(std140, binding = 5) buffer TriangleBlock
 {
-    Triangle triangles [6258];
+    Triangle triangles [2520];
 };
 
 layout (std140, binding = 6) buffer MaterialBlock {
-    Material materials [5];
+    Material materials [20];
+};
+
+layout(std140, binding = 7) buffer CameraInfo
+{
+    vec4 camera_position;
+    vec4 camera_direction;
+    vec4 camera_data; //fov
 };
 
 layout(rgba32f, binding = 0) uniform image2D imgOutput;
@@ -48,6 +55,9 @@ layout(location = 2) uniform int accumulate;
 
 const int numSpheres = 5;
 const int numTriangles = 6258;
+
+const float PI = 3.141592;
+const bool render_triangles = false;
 
 
 
@@ -64,21 +74,19 @@ float random(inout uint state)
     return NextRandom(state) / 4294967295.0; // 2^32 - 1
 }
 
+float RandomValueNormalDistribution(inout uint state)
+{
+    float theta = 2 * 3.1415926 * random(state);
+    float rho = sqrt(-2 * log(random(state)));
+    return rho * cos(theta);
+}
+
 vec3 random_unit_vector(inout uint state)
 {
-    float safety = 100.0;
-    vec3 ret;
-    for(float i = 0; i < safety; i += 1.0)
-    {
-        float x = random(state) * 2.0 - 1.0;
-        float y = random(state) * 2.0 - 1.0;
-        float z = random(state) * 2.0 - 1.0;
-        ret = vec3(x,y,z);
-        if(length(ret) <= 1.0)
-        {
-            return normalize(ret);
-        }
-    }
+    vec3 ret = vec3(
+        RandomValueNormalDistribution(state),
+        RandomValueNormalDistribution(state), 
+        RandomValueNormalDistribution(state));
     return normalize(ret);
 }
 
@@ -102,6 +110,73 @@ vec3 getEnvironmentLight(vec3 ray_o, vec3 ray_d)
 {
     return vec3(0.0);
 }
+
+// Experimenting
+vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec3 permute(vec3 x) { return mod289(((x * 34.0) + 1.0) * x); }
+
+
+float snoise(vec2 v)
+{
+
+    // Precompute values for skewed triangular grid
+    const vec4 C = vec4(0.211324865405187,
+                        // (3.0-sqrt(3.0))/6.0
+                        0.366025403784439,
+                        // 0.5*(sqrt(3.0)-1.0)
+                        -0.577350269189626,
+                        // -1.0 + 2.0 * C.x
+                        0.024390243902439);
+    // 1.0 / 41.0
+
+    // First corner (x0)
+    vec2 i = floor(v + dot(v, C.yy));
+    vec2 x0 = v - i + dot(i, C.xx);
+
+    // Other two corners (x1, x2)
+    vec2 i1 = vec2(0.0);
+    i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+    vec2 x1 = x0.xy + C.xx - i1;
+    vec2 x2 = x0.xy + C.zz;
+
+    // Do some permutations to avoid
+    // truncation effects in permutation
+    i = mod289(i);
+    vec3 p = permute(
+            permute(i.y + vec3(0.0, i1.y, 1.0))
+                + i.x + vec3(0.0, i1.x, 1.0));
+
+    vec3 m = max(0.5 - vec3(
+                        dot(x0, x0),
+                        dot(x1, x1),
+                        dot(x2, x2)
+                        ), 0.0);
+
+    m = m * m;
+    m = m * m;
+
+    // Gradients:
+    //  41 pts uniformly over a line, mapped onto a diamond
+    //  The ring size 17*17 = 289 is close to a multiple
+    //      of 41 (41*7 = 287)
+
+    vec3 x = 2.0 * fract(p * C.www) - 1.0;
+    vec3 h = abs(x) - 0.5;
+    vec3 ox = floor(x + 0.5);
+    vec3 a0 = x - ox;
+
+    // Normalise gradients implicitly by scaling m
+    // Approximation of: m *= inversesqrt(a0*a0 + h*h);
+    m *= 1.79284291400159 - 0.85373472095314 * (a0 * a0 + h * h);
+
+    // Compute final noise value at P
+    vec3 g = vec3(0.0);
+    g.x = a0.x * x0.x + h.x * x0.y;
+    g.yz = a0.yz * vec2(x1.x, x2.x) + h.yz * vec2(x1.y, x2.y);
+    return (130.0 * dot(m, g)) * 0.5 + 0.5;
+}
+// End Experimenting
 
 float hit_sphere(vec3 ray_o, vec3 ray_d, int sphere_ind)
 {
@@ -179,7 +254,7 @@ void calculateRayCollision(vec3 ray_o, vec3 ray_d, inout vec3 normal, inout vec3
     }
 
     vec3 running_normal;
-    for (int triangle_index = 0; triangle_index < numTriangles; triangle_index++)
+    for (int triangle_index = 0; render_triangles && triangle_index < numTriangles; triangle_index++)
     {
         float hit_t = hit_triangle(ray_o, ray_d, triangle_index, running_normal);
         if(hit_t > 0.001 && hit_t < t)
@@ -249,6 +324,8 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, inout uint state)
     return incomingLight;
 }
 
+
+
 void main()
 {
     int raysPerPixel = 1;
@@ -258,20 +335,26 @@ void main()
 
     ivec2 dims = imageSize(imgOutput);
 
-    uint pixelIndex = pixel_coords.y * dims.x + pixel_coords.x;
+    uint pixelIndex = pixel_coords.y * 831266 + pixel_coords.x * 923766;
     uint randomState = pixelIndex + frame * 719393;
 
-    vec3 up = vec3(0.0, 0.0, dims.y / 1000.0);
-    vec3 right = vec3(dims.x / 1000.0, 0.0, 0.0);
+    float zoom = 1.0;
 
-    vec3 forward = vec3(0.0, 1.0, 0.0);
+    vec3 forward = normalize(camera_direction.xyz);
+    vec3 up = vec3(0.0, 0.0, 1.0);
+    vec3 camRight = normalize(cross(forward, up));
+    vec3 camUp = normalize(cross(camRight, forward)) * float(dims.y) / float(dims.x);
+
+    //vec3 up = vec3(0.0, 0.0, float(dims.y) / (dims.x * zoom));
+    //vec3 right = vec3(float(dims.x) / (dims.x * zoom) , 0.0, 0.0);
+
+    vec3 cam_o = camera_position.xyz;//vec3(0.0, -6.0, 1.0);
 
     for (int rays = 0; rays < raysPerPixel; rays++) {
         float x = float(pixel_coords.x + random(randomState)) / dims.x - 0.5;
         float z = float(pixel_coords.y + random(randomState)) / dims.y - 0.5;
 
-        vec3 cam_o = vec3(0.0, -6.0, 1.0);
-        vec3 ray_d = forward + right * x + up * z;
+        vec3 ray_d = forward + camRight * x + camUp * z;
         ray_d = normalize(ray_d);
 
         pixel += Trace(cam_o, ray_d, randomState);
