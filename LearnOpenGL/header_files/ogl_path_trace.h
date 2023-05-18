@@ -116,8 +116,8 @@ int run()
 
 	// build and compile shaders
 	// -------------------------
-	Shader screenQuad("screenQuad.vs", "screenQuad.fs");
-	ComputeShader computeShader("computeShader.cs");
+	Shader screenQuad("screenQuadVert.glsl", "screenQuadFrag.glsl");
+	ComputeShader computeShader("computeShader.glsl");
 
 	screenQuad.use();
 	screenQuad.setInt("tex", 0);
