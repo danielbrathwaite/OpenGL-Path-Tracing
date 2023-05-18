@@ -16,6 +16,7 @@
 #include <geometry_loader.h>
 
 #include <sphere.h>
+#include <bvh.h>
 
 #include <cmath>
 #include <iomanip>
@@ -26,35 +27,41 @@ void renderQuad();
 void handleMovementInput(GLFWwindow* window, int key, int scancode, int action, int mods);
 void updateCameraBuffer();
 static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos);
-void setupBuffers();
+void setupBuffers(int &numSpheres, int &numTriangles, int &numMaterials, int &numNodes);
 
 GLuint sphereSSbo;
 GLuint triangleSSbo;
 GLuint materialSSbo;
 GLuint cameraSSbo;
+GLuint bvhSSbo;
+
+const float PI = 3.141592f;
 
 // settings
 const unsigned int SCR_WIDTH = 1000;
 const unsigned int SCR_HEIGHT = 800;
 
 // texture size
-const unsigned int TEXTURE_WIDTH = 1000;
-const unsigned int TEXTURE_HEIGHT = 800;
+const unsigned int TEXTURE_WIDTH = 400;
+const unsigned int TEXTURE_HEIGHT = 320;
 
 // timing 
 float deltaTime = 0.0f;
 float lastFrameTime = 0.0f; // time of last frame
 
 // camera and movement
-glm::vec4 camera_position = glm::vec4(0.0);
+glm::vec4 camera_position = glm::vec4(0.0, -6.0, 1.0, 0.0);
 glm::vec4 camera_direction = glm::vec4(0.0, 1.0, 0.0, 0.0);
 
 float moveSpeed = 10.0;
-float rotSpeed = 100.0;
+float rotSpeed = 0.1;
 
 bool mF, mB, mL, mR, mU, mD, mC;
 double pxpos = 0, pypos = 0; // previous mouse coordinates
 
+
+int userDefinedDisplayMode = 1;
+int displayMode = 1;
 int userDefinedAccumulate = 1;
 int accumulate = 0;
 bool frameMessage = true;
@@ -138,7 +145,8 @@ int run()
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 
-	setupBuffers(); // initialize buffer data and send to shaders
+	int numTris, numSpheres, numMaterials, numNodes;
+	setupBuffers(numTris, numSpheres, numMaterials, numNodes); // initialize buffer data and send to shaders
 
 	//I have no idea what I am doing
 	glfwSetKeyCallback(window, handleMovementInput);
@@ -148,6 +156,7 @@ int run()
 	// render loop
 	// -----------
 	int frameCount = 0;
+	float lastMessage = (float)glfwGetTime();
 	while (!glfwWindowShouldClose(window))
 	{
 		updateCameraBuffer();
@@ -157,7 +166,8 @@ int run()
 		float currentTime = (float)glfwGetTime();
 		deltaTime = currentTime - lastFrameTime;
 		lastFrameTime = currentTime;
-		if (frameMessage) {
+		if (frameMessage && (currentTime - lastMessage > 1)) {
+			lastMessage = currentTime;
 			std::cout << "\r" << setw(20) << left << "FPS: " << setw(10) << 1 / deltaTime << "  # Writes : " << frameCount << "   " << std::flush;
 		}
 
@@ -171,7 +181,12 @@ int run()
 		computeShader.use(); 
 		computeShader.setFloat("t", currentTime);
 		computeShader.setInt("frame", frameCount);
+		computeShader.setInt("numSpheres", numSpheres);
+		computeShader.setInt("numTriangles", numTris);
+		computeShader.setInt("numMaterials", numMaterials);
+		computeShader.setInt("numNodes", numNodes);
 		computeShader.setInt("accumulate", accumulate);
+		computeShader.setInt("displayMode", displayMode);
 		glDispatchCompute((unsigned int)TEXTURE_WIDTH / 10, (unsigned int)TEXTURE_HEIGHT / 10, 1);
 
 		// make sure writing to image has finished before read
@@ -248,6 +263,15 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 }
 
 void handleMovementInput(GLFWwindow* window, int key, int scancode, int action, int mods) {
+
+	int prevDisplayMode = displayMode;
+	if (key == GLFW_KEY_1) displayMode = 1;
+	if (key == GLFW_KEY_2) displayMode = 2;
+	if (key == GLFW_KEY_3) displayMode = 3;
+	if (key == GLFW_KEY_4) displayMode = 4;
+	if (prevDisplayMode != displayMode) mC = true;
+
+
 	if (key == GLFW_KEY_W) {
 		if (action == GLFW_PRESS) mF = true;
 		if (action == GLFW_RELEASE) mF = false;
@@ -282,7 +306,7 @@ void handleMovementInput(GLFWwindow* window, int key, int scancode, int action, 
 }
 
 void updateCameraBuffer() {
-	glm::vec4 forward = glm::normalize(camera_direction);
+	glm::vec4 forward = glm::normalize(camera_direction - glm::vec4(0.0, 0.0, camera_direction.z, 0.0));
 	glm::vec3 up3 = glm::vec3(0.0, 0.0, 1.0);
 	glm::vec4 up = glm::vec4(0.0, 0.0, 1.0, 0.0);
 	glm::vec3 forward3 = glm::vec3(forward.x, forward.y, forward.z);
@@ -315,69 +339,54 @@ void updateCameraBuffer() {
 static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
 	mC = true;
 
-	double rotationAroundZ = glm::radians(pxpos - xpos) * rotSpeed * deltaTime;
-	double rotationAroundHoriz = glm::radians(ypos - pypos) * rotSpeed * deltaTime;
+	double rotationAroundZ = glm::radians(pxpos - xpos) * rotSpeed;// *deltaTime;
+	double rotationAroundHoriz = glm::radians(pypos - ypos) * rotSpeed;// *deltaTime;
 
 	double lengthFromZPerspective = sqrt(camera_direction.x * camera_direction.x + camera_direction.y * camera_direction.y);
 	double currentZAngle = atan2(camera_direction.y, camera_direction.x);
 
 	double newZAngle = currentZAngle + rotationAroundZ;
-	double newX = lengthFromZPerspective * cos(newZAngle);
-	double newY = lengthFromZPerspective * sin(newZAngle);
+	double tnewX = lengthFromZPerspective * cos(newZAngle);
+	double tnewY = lengthFromZPerspective * sin(newZAngle);
 
-	camera_direction = glm::vec4(newX, newY, camera_direction.z, 0.0);
+
+
+	double length = sqrt(camera_direction.x * camera_direction.x + camera_direction.y * camera_direction.y + camera_direction.z * camera_direction.z);
+
+	double currentHAngle = atan2(camera_direction.z, lengthFromZPerspective);
+	double newHAngle = currentHAngle + rotationAroundHoriz;
+	if (newHAngle > PI / 2.0 || newHAngle < -PI / 2.0) newHAngle = currentHAngle;
+
+	double newZ = length * sin(newHAngle);
+	double newXYLength = length * cos(newHAngle);
+	double newX = newXYLength * cos(newZAngle);
+	double newY = newXYLength * sin(newZAngle);
+
+	camera_direction = glm::vec4(newX, newY, newZ, 0.0);
+
+
 
 	pxpos = xpos;
 	pypos = ypos;
 }
 
 
-void setupBuffers() {
-	glGenBuffers(1, &sphereSSbo);
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, sphereSSbo);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, 5 * sizeof(struct Sphere), NULL, GL_STATIC_DRAW);
-	GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT; // the invalidate makes a big difference when re-writing
-	Sphere* spheres = (Sphere*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, 5 * sizeof(Sphere), bufMask);
+void setupBuffers(int &numTris, int &numSpheres, int &numMaterials, int &numNodes) {
 
-	Sphere l;
-	l.data = glm::vec4(100.0, -15.0, 93.0, 100.0);
-	l.materialData = glm::vec4(6.0, 0.0, 0.0, 0.0);
+	
 
-	Sphere g;
-	g.data = glm::vec4(0.0, 40.0, -1000000.0, 1000000.0);
-	g.materialData = glm::vec4(9.0, 0.0, 0.0, 0.0);
-
-	Sphere s1;
-	s1.data = glm::vec4(-4.0, 3.0, 2.0, 2.0);
-	s1.materialData = glm::vec4(9.0, 0.0, 0.0, 0.0);
-
-	Sphere s2;
-	s2.data = glm::vec4(4.0, 3.0, 2.0, 2.0);
-	s2.materialData = glm::vec4(7.0, 0.0, 0.0, 0.0);
-
-	Sphere s3;
-	s3.data = glm::vec4(0.0, 3.0, 2.0, 2.0);
-	s3.materialData = glm::vec4(10.0, 0.0, 0.0, 0.0);
-
-	spheres[0] = l;
-	spheres[1] = g;
-	spheres[2] = s1;
-	spheres[3] = s2;
-	spheres[4] = s3;
-
-	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-
-
+	cout << "Setting up buffers" << endl;
 	vector<Triangle> trivect;
 	vector<Material> matvect;
-	load_vertex_data("scene_data/shipobj.txt", "scene_data/shipmtl.txt", trivect, matvect);
+	load_vertex_data("scene_data/driftobj.txt", "scene_data/driftmtl.txt", trivect, matvect);
 
-	int numTris = trivect.size();
+	numTris = trivect.size();
 
 	cout << setw(20) << left << "# of polygons: " << numTris << endl;
 
 	glGenBuffers(1, &triangleSSbo);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, triangleSSbo);
+	GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT; // the invalidate makes a big difference when re-writing
 	glBufferData(GL_SHADER_STORAGE_BUFFER, numTris * sizeof(struct Triangle), NULL, GL_STATIC_DRAW);
 
 	Triangle* tris = (Triangle*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, numTris * sizeof(Triangle), bufMask);
@@ -390,24 +399,41 @@ void setupBuffers() {
 
 
 
+	vector<BVH> heirarchy = buildTree(trivect);
+	numNodes = heirarchy.size();
+
+	glGenBuffers(1, &bvhSSbo);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, bvhSSbo);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, numNodes * sizeof(struct BVH), NULL, GL_STATIC_DRAW);
+
+	BVH* heir = (BVH*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, numNodes * sizeof(BVH), bufMask);
+
+	for (int bvhind = 0; bvhind < numNodes; bvhind++) {
+		heir[bvhind] = heirarchy[bvhind];
+	}
+
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+
+
 	Material light;
 	light.color = glm::vec4(0.0, 0.0, 0.0, 1.0);
 	light.emissionColor = glm::vec4(0.99, 0.95, 0.78, 1.0);
 	light.specularColor = glm::vec4(0.0, 0.0, 0.0, 0.0);
-	//light.data = glm::vec4(1.5, 0.0, 0.0, 0.0);
-	light.data = glm::vec4(0.8, 0.0, 0.0, 0.0);
+	light.data = glm::vec4(1.5, 0.0, 0.0, 0.0);
+	//light.data = glm::vec4(0.8, 0.0, 0.0, 0.0);
 
 	Material spec;
-	spec.color = glm::vec4(0.2, 0.2, 1.0, 1.0);
+	spec.color = glm::vec4(1.0, 0.39, 0.28, 1.0);
 	spec.emissionColor = glm::vec4(0.0, 0.0, 0.0, 1.0);
 	spec.specularColor = glm::vec4(1.0, 1.0, 1.0, 1.0);
-	spec.data = glm::vec4(0.0, 1.0, 0.1, 0.0);
+	spec.data = glm::vec4(0.0, 1.0, 0.18, 0.0);
 
 	Material diffuse;
 	diffuse.color = glm::vec4(1.0, 0.5, 1.0, 1.0);
 	diffuse.emissionColor = glm::vec4(1.0, 1.0, 1.0, 1.0);
 	diffuse.specularColor = glm::vec4(1.0, 1.0, 1.0, 1.0);
-	diffuse.data = glm::vec4(0.0, 1.0, 0.2, 0.0);
+	diffuse.data = glm::vec4(0.0, 1.0, 0.1, 0.0);
 
 	Material ground;
 	ground.color = glm::vec4(1.0, 0.9, 0.9, 1.0);
@@ -421,6 +447,7 @@ void setupBuffers() {
 	metal.specularColor = glm::vec4(1.0, 1.0, 1.0, 1.0);
 	metal.data = glm::vec4(0.0, 0.99, 0.91, 0.0);
 
+	numMaterials = matvect.size();
 	cout << setw(20) << left << "# of materials: " << matvect.size() << endl;
 
 	matvect.push_back(light);
@@ -442,6 +469,48 @@ void setupBuffers() {
 
 
 
+	numSpheres = 1;
+	cout << setw(20) << left << "# of spheres: " << numSpheres << endl;
+
+	glGenBuffers(1, &sphereSSbo);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, sphereSSbo);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, numSpheres * sizeof(struct Sphere), NULL, GL_STATIC_DRAW);
+	Sphere* spheres = (Sphere*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, numSpheres * sizeof(Sphere), bufMask);
+
+	Sphere l;
+	l.data = glm::vec4(100.0, -15.0, 93.0, 100.0);
+	l.materialData = glm::vec4(numMaterials + 0.0, 0.0, 0.0, 0.0);
+	//was 11
+
+	Sphere g;
+	g.data = glm::vec4(0.0, 40.0, -1000000.0, 1000000.0);
+	g.materialData = glm::vec4(numMaterials + 3.0, 0.0, 0.0, 0.0);
+
+	Sphere s1;
+	s1.data = glm::vec4(-4.0, 3.0, 2.0, 2.0);
+	s1.materialData = glm::vec4(numMaterials + 1.0, 0.0, 0.0, 0.0);
+	//was 12
+
+	Sphere s2;
+	s2.data = glm::vec4(4.0, 3.0, 2.0, 2.0);
+	s2.materialData = glm::vec4(numMaterials + 3.0, 0.0, 0.0, 0.0);
+
+	Sphere s3;
+	s3.data = glm::vec4(-0.5, 3.0, 1.0, 0.8);
+	s3.materialData = glm::vec4(numMaterials + 4.0, 0.0, 0.0, 0.0);
+	//was 15
+
+	spheres[0] = s3;
+	/*spheres[1] = g;
+	spheres[2] = s1;
+	spheres[3] = s2;
+	spheres[4] = s3;*/
+
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+
+
+
 	glGenBuffers(1, &cameraSSbo);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, cameraSSbo);
 	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * sizeof(glm::vec4), NULL, GL_STATIC_DRAW);
@@ -459,6 +528,7 @@ void setupBuffers() {
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, triangleSSbo);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, materialSSbo);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, cameraSSbo);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, bvhSSbo);
 }
 
 

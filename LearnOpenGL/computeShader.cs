@@ -27,17 +27,25 @@ struct Triangle
     vec4 materialData;
 };
 
+struct BVH
+{
+    vec4 minPoint;
+    vec4 maxPoint;
+    vec4 data; // {bvhChild1, bvhChild2, bvhParent, unused}
+    vec4 triangle_data; // {triangleIndex1, triangleIndex2, unused, unused}
+};
+
 layout (std140, binding = 4) buffer SphereBlock {
-    Sphere spheres [5];
+    Sphere spheres [10000];
 };
 
 layout(std140, binding = 5) buffer TriangleBlock
 {
-    Triangle triangles [2520];
+    Triangle triangles [100000];
 };
 
 layout (std140, binding = 6) buffer MaterialBlock {
-    Material materials [20];
+    Material materials [100];
 };
 
 layout(std140, binding = 7) buffer CameraInfo
@@ -47,17 +55,30 @@ layout(std140, binding = 7) buffer CameraInfo
     vec4 camera_data; //fov
 };
 
+layout(std140, binding = 8) buffer BVHBlock
+{
+    BVH heirarchy [100000];
+};
+
 layout(rgba32f, binding = 0) uniform image2D imgOutput;
 
 layout(location = 0) uniform float t;                 /* Time */
 layout(location = 1) uniform int frame;
-layout(location = 2) uniform int accumulate;
+layout(location = 2) uniform int numSpheres;
+layout(location = 3) uniform int numTriangles;
+layout(location = 4) uniform int numMaterials;
+layout(location = 5) uniform int numNodes;
+layout(location = 6) uniform int accumulate;
+layout(location = 7) uniform int displayMode;
 
-const int numSpheres = 5;
-const int numTriangles = 6258;
+
+int maxBounceCount = 5;
 
 const float PI = 3.141592;
-const bool render_triangles = false;
+const bool render_triangles = true;
+const bool render_spheres = true;
+const bool antiAlias = true;
+
 
 
 
@@ -106,7 +127,7 @@ vec4 ACESFilmCol(vec3 val)
     return vec4(ACESFilm(val.r), ACESFilm(val.g), ACESFilm(val.b), 1.0);
 }
 
-vec3 getEnvironmentLight(vec3 ray_o, vec3 ray_d)
+vec3 getEnvironmentLight(vec3 ray_d)
 {
     return vec3(0.0);
 }
@@ -185,17 +206,15 @@ float hit_sphere(vec3 ray_o, vec3 ray_d, int sphere_ind)
 
     vec3 oc = ray_o - sphere_p;
     float a = dot(ray_d, ray_d);
-    float b = 2.0 * dot(oc, ray_d);
+    float half_b = dot(oc, ray_d);
     float c = dot(oc, oc) - sphere_r * sphere_r;
-    float discriminant = b * b - 4 * a * c;
+    float discriminant = half_b * half_b - a * c;
 
-    if (discriminant < 0)
+    if (discriminant < 0.0f)
     {
         return -1.0;
-    }
-    else
-    {
-        return ((-b - sqrt(discriminant)) / (2.0 * a));
+    }else{
+        return ((-half_b - sqrt(discriminant)) / a);
     }
 }
 
@@ -234,47 +253,146 @@ float hit_triangle(vec3 ray_o, vec3 ray_d, int triangle_ind, out vec3 normal)
     return -1.0;
 }
 
+bool bvh_intersect(BVH b, vec3 ray_o, vec3 ray_d)
+{
+    float tmin = (b.minPoint.x - ray_o.x) / ray_d.x;
+    float tmax = (b.maxPoint.x - ray_o.x) / ray_d.x;
+
+    if (tmin > tmax)
+    {
+        float temp = tmin;
+        tmin = tmax;
+        tmax = temp;
+        //swap(tmin, tmax);
+    }
+
+    float tymin = (b.minPoint.y - ray_o.y) / ray_d.y;
+    float tymax = (b.maxPoint.y - ray_o.y) / ray_d.y;
+
+    if (tymin > tymax)
+    {
+        float temp = tymin;
+        tymin = tymax;
+        tymax = temp;
+        //swap(tymin, tymax);
+    }
+
+    if ((tmin > tymax) || (tymin > tmax))
+        return false;
+
+    if (tymin > tmin)
+        tmin = tymin;
+
+    if (tymax < tmax)
+        tmax = tymax;
+
+    float tzmin = (b.minPoint.z - ray_o.z) / ray_d.z;
+    float tzmax = (b.maxPoint.z - ray_o.z) / ray_d.z;
+
+    if (tzmin > tzmax)
+    {
+        float temp = tzmin;
+        tzmin = tzmax;
+        tzmax = temp;
+        //swap(tzmin, tzmax);
+    }
+
+    if ((tmin > tzmax) || (tzmin > tmax))
+        return false;
+
+    /*if (tzmin > tmin)
+        tmin = tzmin;
+
+    if (tzmax < tmax)
+        tmax = tzmax;*/
+
+    return true;
+}
+
 void calculateRayCollision(vec3 ray_o, vec3 ray_d, inout vec3 normal, inout vec3 hitPoint, inout bool hit, out int materialIndex)
 {
     float t = 1. / 0.;
 
-    for (int sphere_index = 0; sphere_index < numSpheres; sphere_index++) {
-        float hit_t = hit_sphere(ray_o, ray_d, sphere_index);
-        if (hit_t > 0.001 && hit_t < t)
-        {
-            vec3 sphere_p = spheres[sphere_index].data.xyz;
-            vec3 potential_normal = normalize(ray_o + (hit_t * ray_d) - sphere_p);
-            if (dot(potential_normal, ray_d) > 0.0) { potential_normal = -1.0 * potential_normal; }//continue; }
-            hit = true;
-            t = hit_t;
-            normal = potential_normal;
-            hitPoint = ray_o + hit_t * ray_d;
-            materialIndex = int(spheres[sphere_index].materialData.x);
+    if (render_spheres) {
+        for (int sphere_index = 0; sphere_index < numSpheres; sphere_index++) {
+            float hit_t = hit_sphere(ray_o, ray_d, sphere_index);
+            if (hit_t > 0.0001 && hit_t < t)
+            {
+                vec3 sphere_p = spheres[sphere_index].data.xyz;
+                vec3 potential_normal = normalize(ray_o + (hit_t * ray_d) - sphere_p);
+                if (dot(potential_normal, ray_d) > 0.0f) { potential_normal = -1.0 * potential_normal; }//continue; }
+                hit = true;
+                t = hit_t;
+                normal = potential_normal;
+                hitPoint = ray_o + hit_t * ray_d;
+                materialIndex = int(spheres[sphere_index].materialData.x);
+            }
         }
     }
 
-    vec3 running_normal;
-    for (int triangle_index = 0; render_triangles && triangle_index < numTriangles; triangle_index++)
+
+    if(!render_triangles){return;}
+
+    int bvh_ind = numNodes - 1;
+    int came_from = 2; // 2 -> parent | 0 -> left child | 1 -> right child
+
+    vec3 running_normal, running_normal2;
+
+    while (bvh_ind > -1)
     {
-        float hit_t = hit_triangle(ray_o, ray_d, triangle_index, running_normal);
-        if(hit_t > 0.001 && hit_t < t)
-        {
-            if (dot(running_normal, ray_d) > 0.0) { running_normal = -1.0 * running_normal; }//continue; }
-            hit = true;
-            t = hit_t;
-            normal = running_normal;
-            hitPoint = ray_o + hit_t * ray_d;
-            materialIndex = int(triangles[triangle_index].materialData.x);
-        }
-    }
+        BVH b = heirarchy[bvh_ind];
 
-    return;
+        if(came_from == 0) // left child
+        {
+            bvh_ind = int(b.data[1]);
+            came_from = 2;
+        }else if(came_from == 1) // right child
+        {
+            bvh_ind = int(b.data[2]);
+            came_from = int(b.data[3]);
+        }else // parent
+        {
+            if (!bvh_intersect(b, ray_o, ray_d))
+            {
+                bvh_ind = int(b.data[2]);
+                came_from = int(b.data[3]);
+            } else if (b.data[0] > -1) // interior node
+            {
+                bvh_ind = int(b.data[0]);
+                came_from = 2;
+            } else // leaf node
+            {
+                float hit_t = hit_triangle(ray_o, ray_d, int(b.triangle_data[0]), running_normal);
+                float hit_t2 = hit_triangle(ray_o, ray_d, int(b.triangle_data[1]), running_normal2);
+
+                if (hit_t > 0.0001 && hit_t < t && (hit_t < hit_t2 || hit_t2 < 0.0001))
+                {
+                    if (dot(running_normal, ray_d) > 0.0) { running_normal = -1.0 * running_normal; }
+                    hit = true;
+                    t = hit_t;
+                    normal = running_normal;
+                    hitPoint = ray_o + (hit_t * ray_d);
+                    materialIndex = int(triangles[int(b.triangle_data[0])].materialData.x);
+                }
+                else if (hit_t2 > 0.0001 && hit_t2 < t)
+                {
+                    if (dot(running_normal2, ray_d) > 0.0) { running_normal = -1.0 * running_normal; }
+                    hit = true;
+                    t = hit_t2;
+                    normal = running_normal2;
+                    hitPoint = ray_o + (hit_t2 * ray_d);
+                    materialIndex = int(triangles[int(b.triangle_data[1])].materialData.x);
+                }
+
+                bvh_ind = int(b.data[2]);
+                came_from = int(b.data[3]);
+            }
+        }  
+    }
 }
 
 vec3 Trace(vec3 ray_o, vec3 ray_d, inout uint state)
 {
-    int maxBounceCount = 5;
-
     vec3 incomingLight = vec3(0.0);
     vec3 rayColor = vec3(1.0);
 
@@ -293,8 +411,22 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, inout uint state)
 
         if (hit)
         {
+            if(displayMode == 2)
+            {
+                vec3 normalColor = (normal + 1.0) * 0.5;
+                return normalColor;
+            }
+            if(displayMode == 4)
+            {
+                float s = length(hitPoint - ray_o);
+                float distance = (1.0 - sqrt(s + 1) / (s + 1.0));
+                vec3 distanceColor = vec3(distance * distance);
+                return distanceColor;
+            }
+
             ray_o = hitPoint;
             vec3 diffuseDir = normalize(normal + random_unit_vector(state));
+
 
             vec3 specularDir = normalize(reflect(ray_d, normal));
 
@@ -302,6 +434,11 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, inout uint state)
             float specularProbability = hit_mat.data.z;
             float smoothness = hit_mat.data.y;
             float emissionStrength = hit_mat.data.x;
+
+            if (displayMode == 3) {
+                vec3 objectColor = hit_mat.color.rgb;
+                return objectColor;
+            }
 
             float isSpecularBounce = 0.0;
             if (specularProbability > random(state))
@@ -338,7 +475,7 @@ void main()
     uint pixelIndex = pixel_coords.y * 831266 + pixel_coords.x * 923766;
     uint randomState = pixelIndex + frame * 719393;
 
-    float zoom = 1.0;
+    float zoom = 10.0;
 
     vec3 forward = normalize(camera_direction.xyz);
     vec3 up = vec3(0.0, 0.0, 1.0);
@@ -351,8 +488,14 @@ void main()
     vec3 cam_o = camera_position.xyz;//vec3(0.0, -6.0, 1.0);
 
     for (int rays = 0; rays < raysPerPixel; rays++) {
-        float x = float(pixel_coords.x + random(randomState)) / dims.x - 0.5;
-        float z = float(pixel_coords.y + random(randomState)) / dims.y - 0.5;
+        float antiAX = 0, antiAY = 0;
+        if (antiAlias)
+        {
+            antiAX = random(randomState);
+            antiAY = random(randomState);
+        }
+        float x = float(pixel_coords.x + antiAX) / dims.x - 0.5;
+        float z = float(pixel_coords.y + antiAY) / dims.y - 0.5;
 
         vec3 ray_d = forward + camRight * x + camUp * z;
         ray_d = normalize(ray_d);
