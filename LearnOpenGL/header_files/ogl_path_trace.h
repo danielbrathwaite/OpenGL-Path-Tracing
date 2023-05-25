@@ -42,8 +42,8 @@ const unsigned int SCR_WIDTH = 1000;
 const unsigned int SCR_HEIGHT = 800;
 
 // texture size
-const unsigned int TEXTURE_WIDTH = 400;
-const unsigned int TEXTURE_HEIGHT = 320;
+const unsigned int TEXTURE_WIDTH = 1000;
+const unsigned int TEXTURE_HEIGHT = 800;
 
 // timing 
 float deltaTime = 0.0f;
@@ -116,8 +116,8 @@ int run()
 
 	// build and compile shaders
 	// -------------------------
-	Shader screenQuad("screenQuadVert.glsl", "screenQuadFrag.glsl");
-	ComputeShader computeShader("computeShader.glsl");
+	Shader screenQuad("screenQuadVert.c", "screenQuadFrag.c");
+	ComputeShader computeShader("computeShader.c");
 
 	screenQuad.use();
 	screenQuad.setInt("tex", 0);
@@ -378,7 +378,9 @@ void setupBuffers(int &numTris, int &numSpheres, int &numMaterials, int &numNode
 	cout << "Setting up buffers" << endl;
 	vector<Triangle> trivect;
 	vector<Material> matvect;
-	load_vertex_data("scene_data/driftobj.txt", "scene_data/driftmtl.txt", trivect, matvect);
+	//load_vertex_data("scene_data/driftobj.txt", "scene_data/driftmtl.txt", trivect, matvect);
+	//load_vertex_data("scene_data/rainbowdriftobj.txt", "scene_data/rainbowdriftmtl.txt", trivect, matvect);
+	load_vertex_data("scene_data/p2obj.txt", "scene_data/p2mtl.txt", trivect, matvect);
 
 	numTris = trivect.size();
 
@@ -469,7 +471,7 @@ void setupBuffers(int &numTris, int &numSpheres, int &numMaterials, int &numNode
 
 
 
-	numSpheres = 1;
+	numSpheres = 5;
 	cout << setw(20) << left << "# of spheres: " << numSpheres << endl;
 
 	glGenBuffers(1, &sphereSSbo);
@@ -496,15 +498,19 @@ void setupBuffers(int &numTris, int &numSpheres, int &numMaterials, int &numNode
 	s2.materialData = glm::vec4(numMaterials + 3.0, 0.0, 0.0, 0.0);
 
 	Sphere s3;
-	s3.data = glm::vec4(-0.5, 3.0, 1.0, 0.8);
+	s3.data = glm::vec4(0.0, 3.0, 2.0, 2.0);
 	s3.materialData = glm::vec4(numMaterials + 4.0, 0.0, 0.0, 0.0);
+
+	/*Sphere s3;
+	s3.data = glm::vec4(-0.5, 3.0, 1.0, 0.8);
+	s3.materialData = glm::vec4(numMaterials + 4.0, 0.0, 0.0, 0.0);*/
 	//was 15
 
 	spheres[0] = s3;
-	/*spheres[1] = g;
+	spheres[1] = g;
 	spheres[2] = s1;
 	spheres[3] = s2;
-	spheres[4] = s3;*/
+	spheres[4] = l;
 
 	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 

@@ -12,8 +12,7 @@ using namespace std;
 struct BVH{
     glm::vec4 minPoint;
     glm::vec4 maxPoint;
-    glm::vec4 data; // {bvhChild1, bvhChild2, bvhParent, isRightChild}
-    glm::vec4 triangle_data; //{triangleIndex1, triangleIndex2, unused, unused}
+    glm::vec4 data; //{triangleIndex1, triangleIndex2, hit, miss} * can be concatenated later
 };
 
 void bvh_bounding_points(BVH &b1, BVH &b2, glm::vec4 &pmin, glm::vec4 &pmax){
@@ -28,6 +27,22 @@ void bvh_bounding_points(BVH &b1, BVH &b2, glm::vec4 &pmin, glm::vec4 &pmax){
             pmax[a] = b2.maxPoint[a];
     }
 
+}
+
+void build_links(vector<BVH> &tree, vector<BVH> &modify_tree, int cur, int next_right_node) {
+    if (tree[cur].data.w > -1) {
+        int child1 = int(tree[cur].data.z);
+        int child2 = int(tree[cur].data.w);
+
+        modify_tree[cur].data.z = child1;
+        modify_tree[cur].data.w = next_right_node;
+
+        build_links(tree, modify_tree, child1, child2);
+        build_links(tree, modify_tree, child2, next_right_node);
+    }else{
+        modify_tree[cur].data.z = next_right_node;
+        modify_tree[cur].data.w = next_right_node;
+    }
 }
 
 double bvh_intersection_surface(BVH &b1, BVH &b2){
@@ -51,10 +66,10 @@ bool verify_tree(vector<BVH> &tree, vector<Triangle> &triangles){
     for(int i = tree.size() - 1; i >= 0; i--){
         BVH cur = tree[i];
 
-        if(cur.triangle_data[0] > -1) {
+        if(cur.data[0] > -1) {
             glm::vec4 pmin, pmax;
-            tri_bounding_points(triangles[cur.triangle_data[0]],
-                                triangles[cur.triangle_data[1]], 
+            tri_bounding_points(triangles[cur.data[0]],
+                                triangles[cur.data[1]], 
                                 pmin, 
                                 pmax);
 
@@ -72,8 +87,8 @@ bool verify_tree(vector<BVH> &tree, vector<Triangle> &triangles){
             continue;
         }
 
-        BVH c1 = tree[cur.data[0]];
-        BVH c2 = tree[cur.data[1]];
+        BVH c1 = tree[cur.data[2]];
+        BVH c2 = tree[cur.data[3]];
 
         for(int a = 0; a < 3; a++){
             if(cur.maxPoint[a] < c1.maxPoint[a]){
@@ -128,11 +143,11 @@ vector<BVH> buildTree(vector<Triangle> &triangles){
         }
 
         BVH add;
-        add.data[0] = -1;
-        add.data[1] = -1;
+        add.data[2] = -1;
+        add.data[3] = -1;
         tri_bounding_points(triangles[tris_remaining[0]], triangles[best_join], add.minPoint, add.maxPoint);
-        add.triangle_data[0] = tris_remaining[0];
-        add.triangle_data[1] = best_join;
+        add.data[0] = tris_remaining[0];
+        add.data[1] = best_join;
         tree.push_back(add);
 
         if(to_remove){
@@ -164,18 +179,12 @@ vector<BVH> buildTree(vector<Triangle> &triangles){
             }
 
             BVH add;
-            add.data[0] = joining;
-            add.data[1] = best_join;
-            add.data[2] = -1;
-
-            tree[joining].data[2] = tree.size();
-            tree[joining].data[3] = 0;
-            tree[best_join].data[2] = tree.size();
-            tree[best_join].data[3] = 1;
+            add.data[2] = joining;
+            add.data[3] = best_join;
 
             bvh_bounding_points(tree[joining], tree[best_join], add.minPoint, add.maxPoint);
-            add.triangle_data[0] = -1;
-            add.triangle_data[1] = -1;
+            add.data[0] = -1;
+            add.data[1] = -1;
 
             pending_add.push_back(tree.size());
             tree.push_back(add);
@@ -192,28 +201,14 @@ vector<BVH> buildTree(vector<Triangle> &triangles){
 
     verify_tree(tree, triangles);
 
-    return tree; 
+    vector<BVH> iterable_tree = tree;
+    cout << "Constructing iterable tree..." << endl;
+    build_links(tree, iterable_tree, tree.size() - 1, -1);
+    cout << "Iterable tree construction complete." << endl;
+
+    return iterable_tree; 
 }
 
-
-//deprecated, not sure why this does not work
-/*bool hit_bvh(BVH &b, Ray &r){
-    for (int a = 0; a < 3; a++) {
-        double invD = 1.0f / r.dir[a];
-        double t0 = (b.minPoint[a] - r.orig[a]) * invD;
-        double t1 = (b.maxPoint[a] - r.orig[a]) * invD;
-        if (invD < 0.0){
-            double temp = t0;
-            t0 = t1;
-            t1 = temp;
-        }
-        double t_min = t0;
-        double t_max = t1;
-        if (t_max <= t_min)
-            return false;
-    }
-    return true;
-}*/
 
 //This goes on the GPU
 /*bool bvh_intersect(BVH& b, Ray& r)

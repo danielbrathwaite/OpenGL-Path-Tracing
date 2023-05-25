@@ -12,6 +12,17 @@ This is an implementation of the path tracing algorithm using `C++` and `OPENGL`
 
 * [OpenGL](https://www.opengl.org/) - The GPGPU API used
 
+## Example Output
+
+![rtximg](https://github.com/danielbrathwaite/OpenGL-Path-Tracing/assets/93694908/3049e281-98f6-4f59-a86e-005568b32542)
+
+| Normal Buffer | Color Buffer | Depth Buffer |
+| ------------- | ------------ | ------------ |
+|![normalbuffer](https://github.com/danielbrathwaite/OpenGL-Path-Tracing/assets/93694908/bc44e018-051e-4fab-b7ff-ec236f52cfc9) | ![colorbuffer](https://github.com/danielbrathwaite/OpenGL-Path-Tracing/assets/93694908/127022bf-32e2-4eea-b4a0-64938351b498) | ![depthbuffer](https://github.com/danielbrathwaite/OpenGL-Path-Tracing/assets/93694908/6127618e-b7a0-4eb1-9450-f84cb099b01d) |
+
+
+
+
 ## Authors
 
 * **Daniel Brathwaite**

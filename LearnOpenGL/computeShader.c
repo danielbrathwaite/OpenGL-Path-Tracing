@@ -31,8 +31,7 @@ struct BVH
 {
     vec4 minPoint;
     vec4 maxPoint;
-    vec4 data; // {bvhChild1, bvhChild2, bvhParent, unused}
-    vec4 triangle_data; // {triangleIndex1, triangleIndex2, unused, unused}
+    vec4 data; // {triangleIndex1, triangleIndex2, hit, miss}
 };
 
 layout (std140, binding = 4) buffer SphereBlock {
@@ -95,6 +94,21 @@ float random(inout uint state)
     return NextRandom(state) / 4294967295.0; // 2^32 - 1
 }
 
+float GPURnd(inout vec4 state)
+{
+    const vec4 q = vec4( 1225.0, 1585.0, 2457.0, 2098.0);
+    const vec4 r = vec4( 1112.0, 367.0, 92.0, 265.0);
+    const vec4 a = vec4( 3423.0, 2646.0, 1707.0, 1999.0);
+    const vec4 m = vec4(4194287.0, 4194277.0, 4194191.0, 4194167.0);
+
+    vec4 beta = floor(state / q);
+    vec4 p = a * (state - beta * q) - beta * r;
+    beta = (sign(-p) + vec4(1.0)) * vec4(0.5) * m;
+    state = (p + beta);
+
+    return fract(dot(state / m, vec4(1.0, -1.0, 1.0, -1.0)));
+}
+
 float RandomValueNormalDistribution(inout uint state)
 {
     float theta = 2 * 3.1415926 * random(state);
@@ -109,22 +123,6 @@ vec3 random_unit_vector(inout uint state)
         RandomValueNormalDistribution(state), 
         RandomValueNormalDistribution(state));
     return normalize(ret);
-}
-
-float ACESFilm(float val)
-{
-    float a = 2.51f;
-    float b = 0.03f;
-    float c = 2.43f;
-    float d = 0.59f;
-    float e = 0.14f;
-    float tone_mapped = (val * (a * val + b)) / (val * (c * val + d) + e);
-    return clamp(tone_mapped, 0.0, 1.0);
-}
-
-vec4 ACESFilmCol(vec3 val)
-{
-    return vec4(ACESFilm(val.r), ACESFilm(val.g), ACESFilm(val.b), 1.0);
 }
 
 vec3 getEnvironmentLight(vec3 ray_d)
@@ -253,7 +251,7 @@ float hit_triangle(vec3 ray_o, vec3 ray_d, int triangle_ind, out vec3 normal)
     return -1.0;
 }
 
-bool bvh_intersect(BVH b, vec3 ray_o, vec3 ray_d)
+bool bvh_intersect(BVH b, vec3 ray_o, vec3 ray_d, float cur_t)
 {
     float tmin = (b.minPoint.x - ray_o.x) / ray_d.x;
     float tmax = (b.maxPoint.x - ray_o.x) / ray_d.x;
@@ -274,7 +272,6 @@ bool bvh_intersect(BVH b, vec3 ray_o, vec3 ray_d)
         float temp = tymin;
         tymin = tymax;
         tymax = temp;
-        //swap(tymin, tymax);
     }
 
     if ((tmin > tymax) || (tymin > tmax))
@@ -294,17 +291,20 @@ bool bvh_intersect(BVH b, vec3 ray_o, vec3 ray_d)
         float temp = tzmin;
         tzmin = tzmax;
         tzmax = temp;
-        //swap(tzmin, tzmax);
     }
 
     if ((tmin > tzmax) || (tzmin > tmax))
         return false;
 
-    /*if (tzmin > tmin)
+    if (tzmin > tmin)
         tmin = tzmin;
 
     if (tzmax < tmax)
-        tmax = tzmax;*/
+        tmax = tzmax;
+
+    if (tmin > cur_t) {
+        return false;
+    }
 
     return true;
 }
@@ -333,61 +333,45 @@ void calculateRayCollision(vec3 ray_o, vec3 ray_d, inout vec3 normal, inout vec3
 
     if(!render_triangles){return;}
 
-    int bvh_ind = numNodes - 1;
-    int came_from = 2; // 2 -> parent | 0 -> left child | 1 -> right child
-
     vec3 running_normal, running_normal2;
-
-    while (bvh_ind > -1)
+    for(int bvh_ind = numNodes - 1; bvh_ind > -1;)
     {
         BVH b = heirarchy[bvh_ind];
 
-        if(came_from == 0) // left child
-        {
-            bvh_ind = int(b.data[1]);
-            came_from = 2;
-        }else if(came_from == 1) // right child
-        {
-            bvh_ind = int(b.data[2]);
-            came_from = int(b.data[3]);
-        }else // parent
-        {
-            if (!bvh_intersect(b, ray_o, ray_d))
-            {
-                bvh_ind = int(b.data[2]);
-                came_from = int(b.data[3]);
-            } else if (b.data[0] > -1) // interior node
-            {
-                bvh_ind = int(b.data[0]);
-                came_from = 2;
-            } else // leaf node
-            {
-                float hit_t = hit_triangle(ray_o, ray_d, int(b.triangle_data[0]), running_normal);
-                float hit_t2 = hit_triangle(ray_o, ray_d, int(b.triangle_data[1]), running_normal2);
+        bool hit_box = bvh_intersect(b, ray_o, ray_d, t);
 
-                if (hit_t > 0.0001 && hit_t < t && (hit_t < hit_t2 || hit_t2 < 0.0001))
-                {
-                    if (dot(running_normal, ray_d) > 0.0) { running_normal = -1.0 * running_normal; }
-                    hit = true;
-                    t = hit_t;
-                    normal = running_normal;
-                    hitPoint = ray_o + (hit_t * ray_d);
-                    materialIndex = int(triangles[int(b.triangle_data[0])].materialData.x);
-                }
-                else if (hit_t2 > 0.0001 && hit_t2 < t)
-                {
-                    if (dot(running_normal2, ray_d) > 0.0) { running_normal = -1.0 * running_normal; }
-                    hit = true;
-                    t = hit_t2;
-                    normal = running_normal2;
-                    hitPoint = ray_o + (hit_t2 * ray_d);
-                    materialIndex = int(triangles[int(b.triangle_data[1])].materialData.x);
-                }
+        int next_index = -1;
+        if (hit_box){
+            next_index = int(b.data.z);
+        }else{
+            next_index = int(b.data.w);
+        }
 
-                bvh_ind = int(b.data[2]);
-                came_from = int(b.data[3]);
+        if(hit_box && (b.data.x > -1))
+        {
+            float hit_t = hit_triangle(ray_o, ray_d, int(b.data[0]), running_normal);
+            float hit_t2 = hit_triangle(ray_o, ray_d, int(b.data[1]), running_normal2);
+
+            if (hit_t > 0.0001 && hit_t < t && (hit_t < hit_t2 || hit_t2 < 0.0001))
+            {
+                if (dot(running_normal, ray_d) > 0.0) { running_normal = -1.0 * running_normal; }
+                hit = true;
+                t = hit_t;
+                normal = running_normal;
+                hitPoint = ray_o + (hit_t * ray_d);
+                materialIndex = int(triangles[int(b.data[0])].materialData.x);
             }
-        }  
+            else if (hit_t2 > 0.0001 && hit_t2 < t)
+            {
+                if (dot(running_normal2, ray_d) > 0.0) { running_normal = -1.0 * running_normal; }
+                hit = true;
+                t = hit_t2;
+                normal = running_normal2;
+                hitPoint = ray_o + (hit_t2 * ray_d);
+                materialIndex = int(triangles[int(b.data[1])].materialData.x);
+            }
+        }
+        bvh_ind = next_index;
     }
 }
 
@@ -409,7 +393,7 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, inout uint state)
         hit = false;
         calculateRayCollision(ray_o, ray_d, normal, hitPoint, hit, materialInd);
 
-        if (hit)
+        if (hit && length(rayColor) > 0.01) //dark colors will not gain from more bounces
         {
             if(displayMode == 2)
             {

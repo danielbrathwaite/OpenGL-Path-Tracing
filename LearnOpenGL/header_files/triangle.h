@@ -12,6 +12,30 @@ struct Triangle{
     glm::vec4 materialData;
 };
 
+struct less_than_x
+{
+    inline bool operator() (const Triangle& t1, const Triangle& t2)
+    {
+        return ((t1.v0.x + t1.v1.x + t1.v2.x) < (t2.v0.x + t2.v1.x + t2.v2.x));
+    }
+};
+
+struct less_than_y
+{
+    inline bool operator() (const Triangle& t1, const Triangle& t2)
+    {
+        return ((t1.v0.y + t1.v1.y + t1.v2.y) < (t2.v0.y + t2.v1.y + t2.v2.y));
+    }
+};
+
+struct less_than_z
+{
+    inline bool operator() (const Triangle& t1, const Triangle& t2)
+    {
+        return ((t1.v0.z + t1.v1.z + t1.v2.z) < (t2.v0.z + t2.v1.z + t2.v2.z));
+    }
+};
+
 void tri_bounding_points(Triangle &t1, Triangle &t2, glm::vec4 &pmin, glm::vec4 &pmax) {
     pmin = t1.v0;
     pmax = t1.v0;
