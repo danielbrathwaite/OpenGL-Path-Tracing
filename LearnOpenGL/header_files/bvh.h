@@ -9,11 +9,63 @@
 
 using namespace std;
 
+const double Ci = 1.0; //cost of a ray - primitive intersection test
+const double Ct = 1.0; //cost of a traversal step
+
 struct BVH{
     glm::vec4 minPoint;
     glm::vec4 maxPoint;
-    glm::vec4 data; //{triangleIndex1, triangleIndex2, hit, miss} * can be concatenated later
+    glm::vec4 data; //{triangleIndex1, triangleIndex2, hit, miss} 
 };
+
+double surface_area(BVH& b) {
+    double x = b.maxPoint.x - b.minPoint.x;
+    double y = b.maxPoint.y - b.minPoint.y;
+    double z = b.maxPoint.z - b.minPoint.z;
+
+    return 2.0 * (x * y + y * z + x * z);
+}
+
+void expand_bvh(BVH& b, Triangle& t) {
+    for (int a = 0; a < 3; a++) {
+        if (t.v0[a] < b.minPoint[a]) {
+            b.minPoint[a] = t.v0[a];
+        }
+        if (t.v0[a] > b.maxPoint[a]) {
+            b.maxPoint[a] = t.v0[a];
+        }
+
+        if (t.v1[a] < b.minPoint[a]) {
+            b.minPoint[a] = t.v1[a];
+        }
+        if (t.v1[a] > b.maxPoint[a]) {
+            b.maxPoint[a] = t.v1[a];
+        }
+
+        if (t.v2[a] < b.minPoint[a]) {
+            b.minPoint[a] = t.v2[a];
+        }
+        if (t.v2[a] > b.maxPoint[a]) {
+            b.maxPoint[a] = t.v2[a];
+        }
+    }
+}
+
+int longest_axis(BVH& b) {
+    double x = b.maxPoint.x - b.minPoint.x;
+    double y = b.maxPoint.y - b.minPoint.y;
+    double z = b.maxPoint.z - b.minPoint.z;
+
+    if (x > y && x > z) {
+        return 0;
+    }
+
+    if (y > x && y > z) {
+        return 1;
+    }
+
+    return 2;
+}
 
 void bvh_bounding_points(BVH &b1, BVH &b2, glm::vec4 &pmin, glm::vec4 &pmax){
     pmin = b1.minPoint;
@@ -115,6 +167,104 @@ bool verify_tree(vector<BVH> &tree, vector<Triangle> &triangles){
     cout << "Tree heirarchy validated." << endl;
 
     return true;
+}
+
+
+void find_split(vector<Triangle> triangles, vector<Triangle> &sub1, vector<Triangle> &sub2) {
+    BVH overall;
+    overall.minPoint = glm::vec4(INFINITY);
+    overall.maxPoint = glm::vec4(-INFINITY);
+    for (int i = 0; i < triangles.size(); i++) {
+        Triangle t = triangles[i];
+        expand_bvh(overall, t);
+    }
+    double SA = surface_area(overall);
+
+
+    double minCost = INFINITY;
+    for (int axis = 0; axis < 3; axis++) {
+        std::sort(triangles.begin(), triangles.end(),
+            [axis](Triangle t1, Triangle t2) {
+                return compareTriangles(t1, t2, axis);
+            });
+        for (int split = 1; split < triangles.size(); split += triangles.size() / 60 + 1) {
+            BVH box1, box2;
+            box1.minPoint = glm::vec4(INFINITY);
+            box1.maxPoint = glm::vec4(-INFINITY);
+            box2.minPoint = glm::vec4(INFINITY);
+            box2.maxPoint = glm::vec4(-INFINITY);
+
+            for (int tri1 = 0; tri1 < split; tri1++) {
+                expand_bvh(box1, triangles[tri1]);
+            }
+
+            for (int tri2 = split; tri2 < triangles.size(); tri2++) {
+                expand_bvh(box2, triangles[tri2]);
+            }
+
+            double SA1 = surface_area(box1);
+            double SA2 = surface_area(box2);
+
+            double cost = Ct + (SA1 / SA) * split * Ci + (SA2 / SA) * (triangles.size() - split) * Ci;
+
+            if (cost < minCost) {
+                sub1 = { triangles.begin(), triangles.begin() + split};
+                sub2 = { triangles.begin() + split, triangles.end() };
+                minCost = cost;
+            }
+        }
+    }
+    //cout << sub1.size() / triangles.size() << endl;
+}
+
+//Experimental
+void buildSAHTreeHelper(vector<Triangle> &triangle_reference, vector<Triangle> triangles, vector<BVH> &bounds, int insert) {
+    BVH overall;
+    overall.minPoint = glm::vec4(INFINITY);
+    overall.maxPoint = glm::vec4(-INFINITY);
+    for (int i = 0; i < triangles.size(); i++) {
+        Triangle t = triangles[i];
+        expand_bvh(overall, t);
+    }
+
+    if (triangles.size() <= 2) {
+        overall.data.x = find(triangle_reference.begin(), triangle_reference.end(), triangles[0]) - triangle_reference.begin();
+        overall.data.y = find(triangle_reference.begin(), triangle_reference.end(), triangles[triangles.size() - 1]) - triangle_reference.begin();
+        overall.data.w = -1;
+        overall.data.z = -1;
+        bounds[insert] = overall;
+        return;
+    }
+
+    vector<Triangle> leftSubset, rightSubset;
+    find_split(triangles, leftSubset, rightSubset);
+    
+    BVH temp1, temp2;
+    bounds.push_back(temp1);
+    bounds.push_back(temp2);
+    overall.data.z = bounds.size() - 2;
+    overall.data.w = bounds.size() - 1;
+    buildSAHTreeHelper(triangle_reference, leftSubset, bounds, overall.data.z);
+    buildSAHTreeHelper(triangle_reference, rightSubset, bounds, overall.data.w);
+
+    bounds[insert] = overall;
+    return;
+}
+
+
+vector<BVH> buildSAHTree(vector<Triangle>& triangles) {
+    vector<BVH> heirarchy;
+    BVH temp;
+    heirarchy.push_back(temp);
+
+    buildSAHTreeHelper(triangles, triangles, heirarchy, 0);
+    
+    verify_tree(heirarchy, triangles);
+
+    vector<BVH> modify = heirarchy;
+    build_links(heirarchy, modify, 0, -1);
+
+    return modify;
 }
 
 

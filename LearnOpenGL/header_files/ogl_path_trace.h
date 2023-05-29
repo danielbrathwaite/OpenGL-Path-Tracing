@@ -171,13 +171,6 @@ int run()
 			std::cout << "\r" << setw(20) << left << "FPS: " << setw(10) << 1 / deltaTime << "  # Writes : " << frameCount << "   " << std::flush;
 		}
 
-		//this is how to write to buffer
-
-		/*glBindBuffer(GL_SHADER_STORAGE_BUFFER, sphereSSbo);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, 5 * sizeof(struct Sphere), spheres, GL_STATIC_DRAW); //sizeof(data) only works for statically sized C/C++ arrays.
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, sphereSSbo);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0); // unbind*/
-
 		computeShader.use(); 
 		computeShader.setFloat("t", currentTime);
 		computeShader.setInt("frame", frameCount);
@@ -379,8 +372,9 @@ void setupBuffers(int &numTris, int &numSpheres, int &numMaterials, int &numNode
 	vector<Triangle> trivect;
 	vector<Material> matvect;
 	//load_vertex_data("scene_data/driftobj.txt", "scene_data/driftmtl.txt", trivect, matvect);
-	//load_vertex_data("scene_data/rainbowdriftobj.txt", "scene_data/rainbowdriftmtl.txt", trivect, matvect);
-	load_vertex_data("scene_data/p2obj.txt", "scene_data/p2mtl.txt", trivect, matvect);
+	load_vertex_data("scene_data/freeobj.txt", "scene_data/freemtl.txt", trivect, matvect);
+	//load_vertex_data("scene_data/p2obj.txt", "scene_data/p2mtl.txt", trivect, matvect);
+	//load_vertex_data("scene_data/Racerobj.txt", "scene_data/Racermtl.txt", trivect, matvect);
 
 	numTris = trivect.size();
 
@@ -401,7 +395,7 @@ void setupBuffers(int &numTris, int &numSpheres, int &numMaterials, int &numNode
 
 
 
-	vector<BVH> heirarchy = buildTree(trivect);
+	vector<BVH> heirarchy = buildSAHTree(trivect);
 	numNodes = heirarchy.size();
 
 	glGenBuffers(1, &bvhSSbo);
@@ -447,7 +441,7 @@ void setupBuffers(int &numTris, int &numSpheres, int &numMaterials, int &numNode
 	metal.color = glm::vec4(0.9, 0.9, 0.1, 1.0);
 	metal.emissionColor = glm::vec4(0.0, 0.0, 0.0, 1.0);
 	metal.specularColor = glm::vec4(1.0, 1.0, 1.0, 1.0);
-	metal.data = glm::vec4(0.0, 0.99, 0.91, 0.0);
+	metal.data = glm::vec4(0.0, 0.9, 0.91, 0.0);
 
 	numMaterials = matvect.size();
 	cout << setw(20) << left << "# of materials: " << matvect.size() << endl;
@@ -471,7 +465,7 @@ void setupBuffers(int &numTris, int &numSpheres, int &numMaterials, int &numNode
 
 
 
-	numSpheres = 5;
+	numSpheres = 1;
 	cout << setw(20) << left << "# of spheres: " << numSpheres << endl;
 
 	glGenBuffers(1, &sphereSSbo);
@@ -501,16 +495,14 @@ void setupBuffers(int &numTris, int &numSpheres, int &numMaterials, int &numNode
 	s3.data = glm::vec4(0.0, 3.0, 2.0, 2.0);
 	s3.materialData = glm::vec4(numMaterials + 4.0, 0.0, 0.0, 0.0);
 
-	/*Sphere s3;
 	s3.data = glm::vec4(-0.5, 3.0, 1.0, 0.8);
-	s3.materialData = glm::vec4(numMaterials + 4.0, 0.0, 0.0, 0.0);*/
-	//was 15
+	s3.materialData = glm::vec4(numMaterials + 4.0, 0.0, 0.0, 0.0);
 
 	spheres[0] = s3;
-	spheres[1] = g;
+	/*spheres[1] = g;
 	spheres[2] = s1;
 	spheres[3] = s2;
-	spheres[4] = l;
+	spheres[4] = l;*/
 
 	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 

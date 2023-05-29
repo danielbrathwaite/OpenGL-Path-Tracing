@@ -78,6 +78,9 @@ const bool render_triangles = true;
 const bool render_spheres = true;
 const bool antiAlias = true;
 
+// Environment Settings
+bool EnvironmentEnabled = true;
+
 
 
 
@@ -127,7 +130,13 @@ vec3 random_unit_vector(inout uint state)
 
 vec3 getEnvironmentLight(vec3 ray_d)
 {
-    return vec3(0.0);
+    if (!EnvironmentEnabled) {
+        return vec3(0);
+    }
+
+    vec3 dir = normalize(ray_d);
+    float t = 0.5 * (dir.z + 1.0);
+    return (1.0 - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0);
 }
 
 // Experimenting
@@ -214,6 +223,52 @@ float hit_sphere(vec3 ray_o, vec3 ray_d, int sphere_ind)
     }else{
         return ((-half_b - sqrt(discriminant)) / a);
     }
+}
+
+float RayIntersectsTriangle(vec3 ray_o,
+    vec3 ray_d,
+    int triangle_ind,
+    out vec3 normal)
+{
+    const float EPSILON = 0.0000001;
+    Triangle test = triangles[triangle_ind];
+    vec3 vertex0 = test.v0.xyz;
+    vec3 vertex1 = test.v1.xyz;
+    vec3 vertex2 = test.v2.xyz;
+    vec3 edge1, edge2, h, s, q;
+    float a, f, u, v;
+    edge1 = vertex1 - vertex0;
+    edge2 = vertex2 - vertex0;
+    h = cross(ray_d, edge2);
+    a = dot(edge1, h);
+
+    if (a > -EPSILON && a < EPSILON)
+        return -1.0;    // This ray is parallel to this triangle.
+
+    f = 1.0 / a;
+    s = ray_o - vertex0;
+    u = f * dot(s, h);
+
+    if (u < 0.0 || u > 1.0)
+        return -1.0;
+
+    q = cross(s, edge1);
+    v = f * dot(ray_d, q);
+
+    if (v < 0.0 || u + v > 1.0)
+        return -1.0;
+
+    // At this stage we can compute t to find out where the intersection point is on the line.
+    float t = f * dot(edge2, q);
+
+    if (t > EPSILON) // ray intersection
+    {
+        //intersection_point = ray_o + ray_d * t;
+        normal = normalize(cross(edge1, edge2));
+        return t;
+    }
+    else // This means that there is a line intersection but not a ray intersection.
+        return -1.0;
 }
 
 float hit_triangle(vec3 ray_o, vec3 ray_d, int triangle_ind, out vec3 normal)
@@ -334,13 +389,14 @@ void calculateRayCollision(vec3 ray_o, vec3 ray_d, inout vec3 normal, inout vec3
     if(!render_triangles){return;}
 
     vec3 running_normal, running_normal2;
-    for(int bvh_ind = numNodes - 1; bvh_ind > -1;)
+    //for(int bvh_ind = numNodes - 1; bvh_ind > -1;)
+    for (int bvh_ind = 0; bvh_ind > -1;)
     {
         BVH b = heirarchy[bvh_ind];
 
         bool hit_box = bvh_intersect(b, ray_o, ray_d, t);
 
-        int next_index = -1;
+        int next_index;
         if (hit_box){
             next_index = int(b.data.z);
         }else{
@@ -363,7 +419,7 @@ void calculateRayCollision(vec3 ray_o, vec3 ray_d, inout vec3 normal, inout vec3
             }
             else if (hit_t2 > 0.0001 && hit_t2 < t)
             {
-                if (dot(running_normal2, ray_d) > 0.0) { running_normal = -1.0 * running_normal; }
+                if (dot(running_normal2, ray_d) > 0.0) { running_normal2 = -1.0 * running_normal2; }
                 hit = true;
                 t = hit_t2;
                 normal = running_normal2;
@@ -435,9 +491,8 @@ vec3 Trace(vec3 ray_o, vec3 ray_d, inout uint state)
             vec3 emittedLight = hit_mat.emissionColor.rgb * emissionStrength;
             incomingLight += emittedLight * rayColor;
             rayColor = rayColor * mix(hit_mat.color.rgb, hit_mat.specularColor.rgb, isSpecularBounce);
-        }
-        else
-        {
+        }else{
+            incomingLight += getEnvironmentLight(ray_d) * rayColor;
             break;
         }
     }

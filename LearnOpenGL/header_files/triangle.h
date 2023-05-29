@@ -10,7 +10,14 @@ struct Triangle{
     glm::vec4 v1;
     glm::vec4 v2;
     glm::vec4 materialData;
+
+    
 };
+
+bool operator==(const Triangle& t1, const Triangle& t2)
+{
+    return (t1.v0 == t2.v0) && (t1.v1 == t2.v1) && (t1.v2 == t2.v2) && (t1.materialData == t2.materialData);
+}
 
 struct less_than_x
 {
@@ -35,6 +42,13 @@ struct less_than_z
         return ((t1.v0.z + t1.v1.z + t1.v2.z) < (t2.v0.z + t2.v1.z + t2.v2.z));
     }
 };
+
+bool compareTriangles(Triangle t1, Triangle t2, int axis) {
+    double c1 = (t1.v0[axis] + t1.v1[axis] + t1.v2[axis]) / 3.0;
+    double c2 = (t2.v0[axis] + t2.v1[axis] + t2.v2[axis]) / 3.0;
+
+    return c1 < c2;
+}
 
 void tri_bounding_points(Triangle &t1, Triangle &t2, glm::vec4 &pmin, glm::vec4 &pmax) {
     pmin = t1.v0;
